@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
-import { readState, writeState } from '../../../lib/store';
+import { readState, writeState, writeLocation } from '../../../lib/store';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -29,14 +29,14 @@ export async function POST(req) {
   }
 
   const { type } = body || {};
-  const isAdmin = body.adminCode === ADMIN_CODE;
+  const isAdmin = typeof body.adminCode === 'string' && body.adminCode.trim() === ADMIN_CODE;
 
   if (type === 'ping') {
     return NextResponse.json({ ok: isAdmin });
   }
 
   const adminTypes = new Set([
-    'timer_start', 'timer_stop', 'timer_finish', 'timer_unfinish',
+    'timer_start', 'timer_stop', 'timer_finish', 'timer_unfinish', 'timer_reset',
     'set_miles', 'steps_add', 'walker_add', 'walker_leave', 'walker_rejoin',
     'challenge_done', 'config_set', 'location_update', 'event_delete',
   ]);
@@ -44,8 +44,24 @@ export async function POST(req) {
     return NextResponse.json({ error: 'admin only' }, { status: 403 });
   }
 
-  const state = await readState();
   const now = Date.now();
+
+  // high-frequency ping: writes its own blob, never touches shared state
+  if (type === 'location_update') {
+    const name = str(body.name, 40);
+    const lat = coord(body.lat);
+    const lng = coord(body.lng);
+    if (!name || lat === null || lng === null) return NextResponse.json({ error: 'bad location' }, { status: 400 });
+    try {
+      await writeLocation(name, { lat, lng, ts: now });
+      return NextResponse.json({ ok: true });
+    } catch (e) {
+      return NextResponse.json({ error: 'location write failed: ' + (e.message || e) }, { status: 500 });
+    }
+  }
+
+  try {
+  const state = await readState();
 
   if (state.timer.finished && type !== 'timer_unfinish') {
     return NextResponse.json({ error: 'The walk is finished — the record is frozen forever. 🏁' }, { status: 409 });
@@ -92,6 +108,11 @@ export async function POST(req) {
       state.timer.finished = false;
       state.timer.finishedAt = null;
       addEvent(state, { kind: 'status', name: 'Timer', text: 'Walk un-finished (admin correction)' });
+      break;
+    }
+    case 'timer_reset': {
+      state.timer = { ...state.timer, running: false, accumMs: 0, lastStartTs: null, startedAt: null, finished: false, finishedAt: null };
+      addEvent(state, { kind: 'status', name: 'Timer', text: 'Clock reset to 0:00 (false start — it never happened 🤫)' });
       break;
     }
     case 'set_miles': {
@@ -197,14 +218,6 @@ export async function POST(req) {
       if (goal !== null) state.donations.goal = goal;
       break;
     }
-    case 'location_update': {
-      const name = str(body.name, 40);
-      const lat = coord(body.lat);
-      const lng = coord(body.lng);
-      if (!name || lat === null || lng === null) return NextResponse.json({ error: 'bad location' }, { status: 400 });
-      state.locations[name] = { lat, lng, ts: now };
-      break;
-    }
     case 'event_delete': {
       state.events = state.events.filter((e) => e.id !== body.id);
       break;
@@ -215,4 +228,7 @@ export async function POST(req) {
 
   await writeState(state);
   return NextResponse.json({ ok: true, state });
+  } catch (e) {
+    return NextResponse.json({ error: 'server error: ' + (e.message || e) }, { status: 500 });
+  }
 }

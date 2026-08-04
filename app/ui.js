@@ -21,8 +21,9 @@ async function api(payload) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'request failed');
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error((data && data.error) || `request failed (HTTP ${res.status}) — if you are on a long *-vercel.app deployment URL, use the-greatest-saunter.vercel.app instead`);
+  if (!data) throw new Error('request failed — server sent a non-JSON response');
   return data;
 }
 
@@ -867,8 +868,7 @@ function AdminPanel({ state, act, now, adminCode, setAdminCode, isAdmin, setIsAd
   const [me, setMe] = useState('Evan');
   const [sharing, setSharing] = useState(false);
   const [msg, setMsg] = useState('');
-  const watchRef = useRef(null);
-  const lastSentRef = useRef(0);
+  const [lastPost, setLastPost] = useState(null);
 
   async function login() {
     setMsg('');
@@ -891,27 +891,33 @@ function AdminPanel({ state, act, now, adminCode, setAdminCode, isAdmin, setIsAd
     } catch (e) { setMsg('err:' + e.message); }
   };
 
-  /* live location sharing */
+  /* live location sharing: keep the freshest GPS fix, post it every 15s */
   useEffect(() => {
-    if (!sharing) {
-      if (watchRef.current != null) navigator.geolocation.clearWatch(watchRef.current);
-      watchRef.current = null;
-      return;
-    }
+    if (!sharing) return;
     if (!navigator.geolocation) { setMsg('err:no geolocation on this device'); setSharing(false); return; }
-    watchRef.current = navigator.geolocation.watchPosition(
+
+    let coords = null;
+    const send = () => {
+      if (!coords) return;
+      act({ type: 'location_update', adminCode, name: me, lat: coords.lat, lng: coords.lng })
+        .then(() => { setLastPost(Date.now()); setMsg(''); })
+        .catch((e) => setMsg('err:location post: ' + e.message));
+    };
+
+    const watchId = navigator.geolocation.watchPosition(
       (p) => {
-        const t = Date.now();
-        if (t - lastSentRef.current < 15000) return;
-        lastSentRef.current = t;
-        act({ type: 'location_update', adminCode, name: me, lat: p.coords.latitude, lng: p.coords.longitude }).catch(() => {});
+        const first = !coords;
+        coords = { lat: p.coords.latitude, lng: p.coords.longitude };
+        if (first) send();
       },
-      (err) => setMsg('err:location: ' + err.message),
-      { enableHighAccuracy: true, maximumAge: 10000 }
+      (err) => setMsg('err:location: ' + err.message + (err.code === 1 ? ' — allow location access for this site in your browser settings' : '')),
+      { enableHighAccuracy: true, maximumAge: 5000 }
     );
+    const iv = setInterval(send, 15000);
+
     return () => {
-      if (watchRef.current != null) navigator.geolocation.clearWatch(watchRef.current);
-      watchRef.current = null;
+      navigator.geolocation.clearWatch(watchId);
+      clearInterval(iv);
     };
   }, [sharing, me, adminCode, act]);
 
@@ -950,6 +956,12 @@ function AdminPanel({ state, act, now, adminCode, setAdminCode, isAdmin, setIsAd
               >🏁 Finish</button>
             )}
             {t.finished && <button className="btn ghost" onClick={() => doAct({ type: 'timer_unfinish' }, 'Un-finished')}>Undo finish</button>}
+            {!t.finished && t.startedAt && !t.running && (
+              <button
+                className="btn ghost small"
+                onClick={() => { if (confirm('Reset the clock to 0:00? (false-start fix)')) doAct({ type: 'timer_reset' }, 'Clock reset'); }}
+              >↺ Reset</button>
+            )}
           </div>
           <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 6 }}>
             elapsed: {fmtDurShort(elapsedMs(t, now))}{t.finished ? ' (FINAL)' : t.running ? ' (running)' : ' (paused)'}
@@ -968,7 +980,11 @@ function AdminPanel({ state, act, now, adminCode, setAdminCode, isAdmin, setIsAd
             </button>
           </div>
           <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 6 }}>
-            Keep this tab open while walking — posts your pin every ~15s.
+            {sharing
+              ? lastPost
+                ? <span style={{ color: 'var(--good)', fontWeight: 700 }}>● sharing as {me} — last pin posted {ago(lastPost, now)}</span>
+                : 'waiting for GPS fix… (allow location access if prompted)'
+              : 'Keep this tab open while walking — posts your pin every ~15s.'}
           </div>
         </div>
 
