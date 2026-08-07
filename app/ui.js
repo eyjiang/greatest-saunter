@@ -131,13 +131,28 @@ export default function Ui() {
   const [geo, setGeo] = useState({ route: null, tracks: {} });
   const trackRef = useRef([]);
   const walkEpochRef = useRef(0);
+  const pendingDeletesRef = useRef(new Map()); // id -> ts, so a stale poll can't resurrect it
+
+  /* a just-deleted post can still come back in a poll served from cache;
+     hide it until the server stops sending it */
+  const applyPendingDeletes = useCallback((s) => {
+    const pend = pendingDeletesRef.current;
+    if (!pend.size || !Array.isArray(s.events)) return s;
+    const now = Date.now();
+    for (const [id, ts] of pend) if (now - ts > 180000) pend.delete(id);
+    const events = s.events.filter((e) => !pend.has(e.id));
+    // ids the server no longer returns have settled
+    const present = new Set(s.events.map((e) => e.id));
+    for (const id of [...pend.keys()]) if (!present.has(id)) pend.delete(id);
+    return events.length === s.events.length ? s : { ...s, events };
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
       const res = await fetch('/api/state', { cache: 'no-store' });
-      if (res.ok) setState(await res.json());
+      if (res.ok) setState(applyPendingDeletes(await res.json()));
     } catch {}
-  }, []);
+  }, [applyPendingDeletes]);
 
   /* map geometry is much heavier than the rest of the state, so it gets its
      own endpoint and a slower poll */
@@ -188,9 +203,12 @@ export default function Ui() {
 
   const act = useCallback(async (payload) => {
     const data = await api(payload);
-    if (data.state) setState(data.state);
+    if (payload && payload.type === 'event_delete' && payload.id) {
+      pendingDeletesRef.current.set(payload.id, Date.now());
+    }
+    if (data.state) setState(applyPendingDeletes(data.state));
     return data;
-  }, []);
+  }, [applyPendingDeletes]);
 
   useEffect(() => {
     if (!sharing) return;
@@ -649,7 +667,7 @@ function Donations({ state, act, finished, now }) {
 
   return (
     <section>
-      <div className="sec-title">Fundraiser <span className="sub">every dollar goes to charity</span></div>
+      <div className="sec-title">Fundraiser</div>
       <div className="card">
         <div className="don-total">${total.toLocaleString()}</div>
         <div style={{ color: 'var(--ink-3)', fontSize: 13, fontWeight: 600 }}>raised of ${goal.toLocaleString()} goal</div>
@@ -665,7 +683,7 @@ function Donations({ state, act, finished, now }) {
                 </a>
               )}
             </div>
-            <label className="lbl">Log your donation (bumps the tracker)</label>
+            <label className="lbl">Log your donation</label>
             <div className="row">
               <input type="text" placeholder="Your name" value={name} onChange={(e) => setName(e.target.value)} style={{ maxWidth: 180 }} />
               <input type="number" placeholder="$ amount" value={amount} onChange={(e) => setAmount(e.target.value)} style={{ maxWidth: 120 }} min="1" />
