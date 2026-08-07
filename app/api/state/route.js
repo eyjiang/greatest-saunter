@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { readState, readLocations } from '../../../lib/store';
+import { readState, readLocations, storageInfo } from '../../../lib/store';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -14,6 +14,11 @@ export async function GET() {
   } catch (e) {
     // readState now throws rather than handing back defaults it might overwrite
     // with; the client keeps whatever it already has on a non-ok response
-    return NextResponse.json({ error: 'state read failed: ' + (e.message || e) }, { status: 503 });
+    const info = storageInfo();
+    return NextResponse.json({
+      error: 'state read failed: ' + (e.message || e),
+      driver: info.driver,
+      hint: info.hint,
+    }, { status: 503 });
   }
 }
