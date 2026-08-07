@@ -130,6 +130,7 @@ export default function Ui() {
   const [shareErr, setShareErr] = useState('');
   const [geo, setGeo] = useState({ route: null, tracks: {} });
   const trackRef = useRef([]);
+  const walkEpochRef = useRef(0);
 
   const refresh = useCallback(async () => {
     try {
@@ -163,6 +164,20 @@ export default function Ui() {
     return () => clearInterval(g);
   }, [refreshGeo]);
 
+  // a full reset bumps walkEpoch; drop breadcrumbs from before it so a phone
+  // that is still sharing doesn't immediately redraw the trail we just erased
+  useEffect(() => {
+    const epoch = (state && state.walkEpoch) || 0;
+    if (epoch <= walkEpochRef.current) return;
+    walkEpochRef.current = epoch;
+    trackRef.current = trackRef.current.filter((p) => p[2] >= epoch);
+    try {
+      for (const k of Object.keys(localStorage)) {
+        if (k.startsWith('saunter_track_')) localStorage.removeItem(k);
+      }
+    } catch {}
+  }, [state && state.walkEpoch]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     const saved = localStorage.getItem('saunter_admin');
     if (saved) {
@@ -193,7 +208,8 @@ export default function Ui() {
     // breadcrumbs survive a page reload, so a mid-walk refresh doesn't lose the tail
     const storeKey = `saunter_track_${shareName}`;
     try {
-      trackRef.current = sanitizePoints(JSON.parse(localStorage.getItem(storeKey) || '[]')).filter((p) => p.length === 3);
+      trackRef.current = sanitizePoints(JSON.parse(localStorage.getItem(storeKey) || '[]'))
+        .filter((p) => p.length === 3 && p[2] >= walkEpochRef.current);
     } catch { trackRef.current = []; }
 
     const persist = (force = false) => {
@@ -204,6 +220,7 @@ export default function Ui() {
 
     const send = (force = false) => {
       if (!coords || stopped) return;
+      trackRef.current = trackRef.current.filter((p) => p[2] >= walkEpochRef.current);
       if (!force && Date.now() - lastSent < 10000) return;
       lastSent = Date.now();
       api(
@@ -778,7 +795,7 @@ function MoodDashboard({ state, now }) {
 
   return (
     <section>
-      <div className="sec-title">Mood-o-meter <span className="sub">crowd vibes over the walk, hourly average</span></div>
+      <div className="sec-title">Mood Dashboard</div>
       <div className="card">
         {latest ? (
           <div className="mood-current">
@@ -985,7 +1002,7 @@ function FeedSection({ state, act, finished, now, isAdmin, adminCode }) {
 
   return (
     <section>
-      <div className="sec-title">Live Feed <span className="sub">everything, as it happens</span></div>
+      <div className="sec-title">Live Feed</div>
 
       {!finished && (
         <div className="card" style={{ marginBottom: 14 }}>
@@ -1091,6 +1108,9 @@ function AdminPanel({ state, act, now, adminCode, setAdminCode, isAdmin, setIsAd
   const [routePaste, setRoutePaste] = useState('');
   const [routeBusy, setRouteBusy] = useState(false);
   const routeFileRef = useRef(null);
+  const [resetConfirm, setResetConfirm] = useState('');
+  const [resetFundraiser, setResetFundraiser] = useState(true);
+  const [resetRoute, setResetRoute] = useState(false);
 
   async function login() {
     setMsg('');
@@ -1140,6 +1160,22 @@ function AdminPanel({ state, act, now, adminCode, setAdminCode, isAdmin, setIsAd
     try {
       await saveRoute(parseRouteText(routePaste), 'Planned route');
     } catch (e) { setMsg('err:' + e.message); }
+  }
+
+  async function doFullReset() {
+    const wipes = [
+      'the clock (back to 0:00)',
+      'miles, steps and walkers',
+      'every feed post and photo',
+      'all live pins and the walked trail',
+      resetFundraiser ? `the donation total (${state.donations.total.toLocaleString()}) and all challenges` : null,
+      resetRoute ? 'the planned route' : null,
+    ].filter(Boolean);
+    if (!confirm(`COMPLETE RESET — this permanently erases:\n\n· ${wipes.join('\n· ')}\n\nYour donate link, goal and map settings are kept. This cannot be undone. Continue?`)) return;
+    setSharing(false);
+    await doAct({ type: 'full_reset', resetFundraiser, resetRoute }, 'Everything reset — back to 0:00 🧼');
+    setResetConfirm('');
+    await refreshGeo();
   }
 
   const routePoints = geo.route ? geo.route.points.length : 0;
@@ -1295,6 +1331,34 @@ function AdminPanel({ state, act, now, adminCode, setAdminCode, isAdmin, setIsAd
           <input type="url" value={mapsEmbed} onChange={(e) => setMapsEmbed(e.target.value)} placeholder="https://www.google.com/maps/embed?…" />
           <div style={{ marginTop: 8 }}>
             <button className="btn small" onClick={() => doAct({ type: 'config_set', donateUrl, mapsEmbed, goal: Number(goal) }, 'Config saved')}>Save</button>
+          </div>
+        </div>
+
+        <div className="admin-box danger">
+          <h4>☢️ Complete reset</h4>
+          <div style={{ fontSize: 12, color: 'var(--ink-3)', marginBottom: 8 }}>
+            Puts the whole page back to a clean slate: clock to 0:00, no miles, steps, walkers,
+            feed posts, live pins or walked trail. Your donate link, goal and map settings are kept.
+          </div>
+          <label style={{ fontSize: 13, color: 'var(--ink-2)', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <input type="checkbox" checked={resetFundraiser} onChange={(e) => setResetFundraiser(e.target.checked)} style={{ width: 'auto' }} />
+            also reset donations (${state.donations.total.toLocaleString()}) &amp; challenges
+          </label>
+          <label style={{ fontSize: 13, color: 'var(--ink-2)', display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+            <input type="checkbox" checked={resetRoute} onChange={(e) => setResetRoute(e.target.checked)} style={{ width: 'auto' }} />
+            also remove the planned route
+          </label>
+          <div className="row" style={{ marginTop: 8 }}>
+            <input
+              type="text"
+              value={resetConfirm}
+              onChange={(e) => setResetConfirm(e.target.value)}
+              placeholder="type RESET"
+              style={{ maxWidth: 130 }}
+            />
+            <button className="btn small danger" onClick={doFullReset} disabled={resetConfirm.trim().toUpperCase() !== 'RESET'}>
+              Reset everything
+            </button>
           </div>
         </div>
 

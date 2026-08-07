@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
 import {
-  readState, writeState, writeLocation, clearLocations,
+  readState, writeState, defaultState, writeLocation, clearLocations,
   writeRoute, clearRoute, readTrack, writeTrack, clearTracks,
 } from '../../../lib/store';
 import { sanitizePoints, capPoints, mergeTrack } from '../../../lib/geo';
@@ -43,7 +43,7 @@ export async function POST(req) {
     'timer_start', 'timer_stop', 'timer_finish', 'timer_unfinish', 'timer_reset',
     'set_miles', 'steps_add', 'walker_add', 'walker_leave', 'walker_rejoin',
     'challenge_done', 'config_set', 'location_update', 'location_clear', 'event_delete',
-    'route_set', 'route_clear', 'track_clear',
+    'route_set', 'route_clear', 'track_clear', 'full_reset',
   ]);
   if (adminTypes.has(type) && !isAdmin) {
     return NextResponse.json({ error: 'admin only' }, { status: 403 });
@@ -106,13 +106,33 @@ export async function POST(req) {
   }
 
   try {
-  const state = await readState();
+  let state = await readState();
 
-  if (state.timer.finished && type !== 'timer_unfinish') {
+  if (state.timer.finished && type !== 'timer_unfinish' && type !== 'full_reset') {
     return NextResponse.json({ error: 'The walk is finished — the record is frozen forever. 🏁' }, { status: 409 });
   }
 
   switch (type) {
+    case 'full_reset': {
+      const fresh = defaultState();
+      // settings are not walk data — a reset shouldn't cost you the donate link
+      fresh.config = state.config;
+      fresh.donations.goal = state.donations.goal;
+      if (!body.resetFundraiser) {
+        fresh.donations.total = state.donations.total;
+        fresh.challenges = state.challenges;
+      }
+      // phones hold their own breadcrumb cache; this tells them to drop it
+      fresh.walkEpoch = now;
+      state = fresh;
+      await Promise.all([
+        clearLocations(),
+        clearTracks(),
+        body.resetRoute ? clearRoute() : Promise.resolve(),
+      ]);
+      addEvent(state, { kind: 'status', name: 'Timer', text: 'Everything reset — back to 0:00 for a clean start 🧼' });
+      break;
+    }
     case 'timer_start': {
       if (!state.timer.running) {
         state.timer.running = true;
