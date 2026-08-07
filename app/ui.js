@@ -647,9 +647,13 @@ function Donations({ state, act, finished, now }) {
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
   const [msg, setMsg] = useState('');
+  const [copied, setCopied] = useState(false);
   const { total, goal } = state.donations;
   const pct = Math.min(100, (total / (goal || 1)) * 100);
   const donateUrl = state.config.donateUrl;
+  const venmo = state.config.venmo;
+  const zelle = state.config.zelle;
+  const noPayMethod = !donateUrl && !venmo && !zelle;
 
   useEffect(() => { setName(localStorage.getItem('saunter_name') || ''); }, []);
 
@@ -676,11 +680,27 @@ function Donations({ state, act, finished, now }) {
 
         {!finished && (
           <>
-            <div className="row" style={{ marginTop: 14 }}>
+            <div className="pay-methods">
+              {venmo && (
+                <a href={`https://venmo.com/u/${venmo}`} target="_blank" rel="noreferrer">
+                  <button className="btn venmo">Venmo @{venmo}</button>
+                </a>
+              )}
               {donateUrl && (
                 <a href={donateUrl} target="_blank" rel="noreferrer">
-                  <button className="btn">Donate 💸</button>
+                  <button className={`btn ${venmo ? 'ghost' : ''}`}>Donate 💸</button>
                 </a>
+              )}
+              {zelle && (
+                <span className="pay-zelle">
+                  or <b>Zelle</b> <code>{zelle}</code>
+                  <button
+                    className="btn small ghost"
+                    onClick={async () => {
+                      try { await navigator.clipboard.writeText(zelle); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch {}
+                    }}
+                  >{copied ? 'copied ✓' : 'copy'}</button>
+                </span>
               )}
             </div>
             <label className="lbl">Log your donation</label>
@@ -691,8 +711,8 @@ function Donations({ state, act, finished, now }) {
               <button className="btn ghost" onClick={submit} disabled={!amount || Number(amount) <= 0}>Add to tracker</button>
             </div>
             {msg && <div className={`msg ${msg.startsWith('err:') ? 'err' : ''}`}>{msg.replace(/^err:/, '')}</div>}
-            {!donateUrl && (
-              <div className="map-note">Admins: set a donation link (Venmo / GoFundMe) in the admin panel so people can actually pay here.</div>
+            {noPayMethod && (
+              <div className="map-note">Admins: add a Venmo handle, Zelle number or donation link in the admin panel so people can actually pay here.</div>
             )}
           </>
         )}
@@ -1130,6 +1150,8 @@ function AdminPanel({ state, act, now, adminCode, setAdminCode, isAdmin, setIsAd
   const [donateUrl, setDonateUrl] = useState(state.config.donateUrl || '');
   const [goal, setGoal] = useState(String(state.donations.goal || ''));
   const [mapsEmbed, setMapsEmbed] = useState(state.config.mapsEmbed || '');
+  const [venmo, setVenmo] = useState(state.config.venmo || '');
+  const [zelle, setZelle] = useState(state.config.zelle || '');
   const [msg, setMsg] = useState('');
   const [routeName, setRouteName] = useState('');
   const [routePaste, setRoutePaste] = useState('');
@@ -1350,14 +1372,18 @@ function AdminPanel({ state, act, now, adminCode, setAdminCode, isAdmin, setIsAd
 
         <div className="admin-box">
           <h4>⚙️ Fundraiser &amp; map config</h4>
-          <label className="lbl">Donation link (Venmo / GoFundMe)</label>
-          <input type="url" value={donateUrl} onChange={(e) => setDonateUrl(e.target.value)} placeholder="https://venmo.com/…" />
+          <label className="lbl">Venmo handle</label>
+          <input type="text" value={venmo} onChange={(e) => setVenmo(e.target.value)} placeholder="@evan-jiang2" />
+          <label className="lbl">Zelle (phone or email)</label>
+          <input type="text" value={zelle} onChange={(e) => setZelle(e.target.value)} placeholder="248-251-2429" />
+          <label className="lbl">Other donation link (GoFundMe etc.)</label>
+          <input type="url" value={donateUrl} onChange={(e) => setDonateUrl(e.target.value)} placeholder="https://gofundme.com/…" />
           <label className="lbl">Goal ($)</label>
           <input type="number" value={goal} onChange={(e) => setGoal(e.target.value)} />
           <label className="lbl">Google Maps embed URL (optional fallback)</label>
           <input type="url" value={mapsEmbed} onChange={(e) => setMapsEmbed(e.target.value)} placeholder="https://www.google.com/maps/embed?…" />
           <div style={{ marginTop: 8 }}>
-            <button className="btn small" onClick={() => doAct({ type: 'config_set', donateUrl, mapsEmbed, goal: Number(goal) }, 'Config saved')}>Save</button>
+            <button className="btn small" onClick={() => doAct({ type: 'config_set', donateUrl, mapsEmbed, venmo, zelle, goal: Number(goal) }, 'Config saved')}>Save</button>
           </div>
         </div>
 
