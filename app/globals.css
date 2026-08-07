@@ -201,3 +201,9 @@ footer b { color: var(--orange); }
   .lb-name { width: 90px; }
   #map { height: 320px; }
 }
+
+/* danger zone */
+.admin-box.danger { border: 1px solid rgba(214,51,108,.45); }
+.admin-box.danger h4 { color: #d6336c; }
+.btn.danger { background: #d6336c; border-color: #d6336c; color: #fff; }
+.btn.danger:disabled { opacity: .45; }
