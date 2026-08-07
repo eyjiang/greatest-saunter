@@ -226,3 +226,7 @@ footer b { color: var(--orange); }
   font-size: 13px; color: var(--ink-2);
 }
 .match-banner b { font-size: 14px; color: var(--good); }
+
+/* where the money ends up */
+.charity-line { margin-top: 10px; font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.charity-line a { color: var(--good); text-decoration: underline; text-underline-offset: 2px; }

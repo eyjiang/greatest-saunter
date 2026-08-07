@@ -301,6 +301,12 @@ export async function POST(req) {
       const mr = num(body.matchRatio, 0, 10);
       if (mr !== null) state.config.matchRatio = Math.round(mr * 100) / 100;
       if (typeof body.matchNote === 'string') state.config.matchNote = str(body.matchNote, 200);
+      // rendered as a link for donors, so only ever an http(s) address
+      if (typeof body.charityUrl === 'string') {
+        const u = str(body.charityUrl, 400);
+        state.config.charityUrl = /^https?:\/\//i.test(u) ? u : '';
+      }
+      if (typeof body.charityName === 'string') state.config.charityName = str(body.charityName, 120);
       const goal = num(body.goal, 1, 10000000);
       if (goal !== null) state.donations.goal = goal;
       break;
