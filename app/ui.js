@@ -650,7 +650,9 @@ function Donations({ state, act, finished, now }) {
   const [copied, setCopied] = useState(false);
   const { total, goal } = state.donations;
   const pct = Math.min(100, (total / (goal || 1)) * 100);
-  const donateUrl = state.config.donateUrl;
+  // ignore anything that isn't a real link — a handle typed in here would
+  // otherwise render a button navigating to a bogus relative path
+  const donateUrl = /^https?:\/\//i.test(state.config.donateUrl || '') ? state.config.donateUrl : '';
   const venmo = state.config.venmo;
   const zelle = state.config.zelle;
   const noPayMethod = !donateUrl && !venmo && !zelle;
