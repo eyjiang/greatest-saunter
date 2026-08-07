@@ -216,3 +216,13 @@ footer b { color: var(--orange); }
   font-size: 15px; font-weight: 700; color: var(--ink);
   background: var(--orange-soft); border: 1px solid var(--line); border-radius: 6px; padding: 5px 9px;
 }
+
+/* employer match callout */
+.don-matched { font-size: 13px; font-weight: 700; color: var(--good); margin-top: 2px; }
+.match-banner {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px;
+  margin-top: 12px; padding: 10px 13px; border-radius: 8px;
+  background: #eef8ef; border: 1px solid rgba(46,125,50,.3);
+  font-size: 13px; color: var(--ink-2);
+}
+.match-banner b { font-size: 14px; color: var(--good); }

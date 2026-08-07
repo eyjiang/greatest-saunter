@@ -655,6 +655,9 @@ function Donations({ state, act, finished, now }) {
   const donateUrl = /^https?:\/\//i.test(state.config.donateUrl || '') ? state.config.donateUrl : '';
   const venmo = state.config.venmo;
   const zelle = state.config.zelle;
+  const matchRatio = Number(state.config.matchRatio) || 0;
+  const matchLabel = matchRatio === 1 ? '1:1' : `${matchRatio}:1`;
+  const matchedTotal = Math.round(total * (1 + matchRatio) * 100) / 100;
   const noPayMethod = !donateUrl && !venmo && !zelle;
 
   useEffect(() => { setName(localStorage.getItem('saunter_name') || ''); }, []);
@@ -677,8 +680,18 @@ function Donations({ state, act, finished, now }) {
       <div className="card">
         <div className="don-total">${total.toLocaleString()}</div>
         <div style={{ color: 'var(--ink-3)', fontSize: 13, fontWeight: 600 }}>raised of ${goal.toLocaleString()} goal</div>
+        {matchRatio > 0 && total > 0 && (
+          <div className="don-matched">≈ ${matchedTotal.toLocaleString()} to charity once the {matchLabel} match lands</div>
+        )}
         <div className="don-bar-outer"><div className="don-bar-inner" style={{ width: `${pct}%` }} /></div>
         <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>{pct.toFixed(0)}% of goal</div>
+
+        {matchRatio > 0 && (
+          <div className="match-banner">
+            <b>🏢 {matchLabel} company match</b>
+            <span>{state.config.matchNote || 'every dollar you give gets matched — your donation counts double'}</span>
+          </div>
+        )}
 
         {!finished && (
           <>
@@ -1154,6 +1167,8 @@ function AdminPanel({ state, act, now, adminCode, setAdminCode, isAdmin, setIsAd
   const [mapsEmbed, setMapsEmbed] = useState(state.config.mapsEmbed || '');
   const [venmo, setVenmo] = useState(state.config.venmo || '');
   const [zelle, setZelle] = useState(state.config.zelle || '');
+  const [matchRatio, setMatchRatio] = useState(String(state.config.matchRatio ?? ''));
+  const [matchNote, setMatchNote] = useState(state.config.matchNote || '');
   const [msg, setMsg] = useState('');
   const [routeName, setRouteName] = useState('');
   const [routePaste, setRoutePaste] = useState('');
@@ -1382,10 +1397,14 @@ function AdminPanel({ state, act, now, adminCode, setAdminCode, isAdmin, setIsAd
           <input type="url" value={donateUrl} onChange={(e) => setDonateUrl(e.target.value)} placeholder="https://gofundme.com/…" />
           <label className="lbl">Goal ($)</label>
           <input type="number" value={goal} onChange={(e) => setGoal(e.target.value)} />
+          <label className="lbl">Company match (1 = 1:1, 0 = none)</label>
+          <input type="number" value={matchRatio} onChange={(e) => setMatchRatio(e.target.value)} step="0.5" min="0" placeholder="1" />
+          <label className="lbl">Match note (optional — e.g. a cap)</label>
+          <input type="text" value={matchNote} onChange={(e) => setMatchNote(e.target.value)} placeholder="every dollar matched, up to $500" />
           <label className="lbl">Google Maps embed URL (optional fallback)</label>
           <input type="url" value={mapsEmbed} onChange={(e) => setMapsEmbed(e.target.value)} placeholder="https://www.google.com/maps/embed?…" />
           <div style={{ marginTop: 8 }}>
-            <button className="btn small" onClick={() => doAct({ type: 'config_set', donateUrl, mapsEmbed, venmo, zelle, goal: Number(goal) }, 'Config saved')}>Save</button>
+            <button className="btn small" onClick={() => doAct({ type: 'config_set', donateUrl, mapsEmbed, venmo, zelle, matchRatio: Number(matchRatio || 0), matchNote, goal: Number(goal) }, 'Config saved')}>Save</button>
           </div>
         </div>
 

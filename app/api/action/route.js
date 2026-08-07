@@ -297,6 +297,10 @@ export async function POST(req) {
           .replace(/[^A-Za-z0-9_.-].*$/, '');
       }
       if (typeof body.zelle === 'string') state.config.zelle = str(body.zelle, 80);
+      // employer match, expressed as dollars matched per dollar given (1 = 1:1)
+      const mr = num(body.matchRatio, 0, 10);
+      if (mr !== null) state.config.matchRatio = Math.round(mr * 100) / 100;
+      if (typeof body.matchNote === 'string') state.config.matchNote = str(body.matchNote, 200);
       const goal = num(body.goal, 1, 10000000);
       if (goal !== null) state.donations.goal = goal;
       break;
