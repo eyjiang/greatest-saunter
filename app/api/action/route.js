@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
-import { readState, writeState, writeLocation, clearLocations } from '../../../lib/store';
+import {
+  readState, writeState, writeLocation, clearLocations,
+  writeRoute, clearRoute, readTrack, writeTrack, clearTracks,
+} from '../../../lib/store';
+import { sanitizePoints, capPoints, mergeTrack } from '../../../lib/geo';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -39,6 +43,7 @@ export async function POST(req) {
     'timer_start', 'timer_stop', 'timer_finish', 'timer_unfinish', 'timer_reset',
     'set_miles', 'steps_add', 'walker_add', 'walker_leave', 'walker_rejoin',
     'challenge_done', 'config_set', 'location_update', 'location_clear', 'event_delete',
+    'route_set', 'route_clear', 'track_clear',
   ]);
   if (adminTypes.has(type) && !isAdmin) {
     return NextResponse.json({ error: 'admin only' }, { status: 403 });
@@ -54,9 +59,39 @@ export async function POST(req) {
     if (!name || lat === null || lng === null) return NextResponse.json({ error: 'bad location' }, { status: 400 });
     try {
       await writeLocation(name, { lat, lng, ts: now });
-      return NextResponse.json({ ok: true });
+      // the phone re-sends a tail of recent breadcrumbs; merge it into the walked track
+      const tail = sanitizePoints(body.tail, 400).filter((p) => p.length === 3);
+      let trackPoints = null;
+      if (tail.length) {
+        const merged = mergeTrack(await readTrack(name), tail);
+        await writeTrack(name, merged);
+        trackPoints = merged.length;
+      }
+      return NextResponse.json({ ok: true, trackPoints });
     } catch (e) {
       return NextResponse.json({ error: 'location write failed: ' + (e.message || e) }, { status: 500 });
+    }
+  }
+
+  // map geometry also lives outside shared state
+  if (type === 'route_set') {
+    const points = capPoints(sanitizePoints(body.points), 1200);
+    if (points.length < 2) return NextResponse.json({ error: 'a route needs at least 2 points' }, { status: 400 });
+    try {
+      await writeRoute({ name: str(body.name, 80) || 'Planned route', points, ts: now });
+      return NextResponse.json({ ok: true, points: points.length });
+    } catch (e) {
+      return NextResponse.json({ error: 'route write failed: ' + (e.message || e) }, { status: 500 });
+    }
+  }
+
+  if (type === 'route_clear' || type === 'track_clear') {
+    try {
+      if (type === 'route_clear') await clearRoute();
+      else await clearTracks(str(body.name, 40) || null);
+      return NextResponse.json({ ok: true });
+    } catch (e) {
+      return NextResponse.json({ error: 'clear failed: ' + (e.message || e) }, { status: 500 });
     }
   }
 

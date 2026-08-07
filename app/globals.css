@@ -88,6 +88,22 @@ section { margin: 26px 0; }
   font-family: var(--font-display); font-weight: 900; font-size: 16px;
   box-shadow: 0 0 0 4px rgba(252,76,2,.35); animation: pulse 2s infinite;
 }
+.pin-route {
+  background: #fff; border: 2px solid #1f6feb; border-radius: 50%;
+  width: 22px; height: 22px; display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 800; color: #1f6feb;
+  box-shadow: 0 1px 3px rgba(0,0,0,.3);
+}
+.pin-route.end { border-color: #333; font-size: 12px; }
+.map-legend {
+  display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center;
+  padding: 8px 4px 2px; font-size: 12px; font-weight: 600; color: var(--ink-2);
+}
+.map-legend .swatch {
+  display: inline-block; width: 22px; height: 0; vertical-align: middle; margin-right: 6px;
+  border-top: 4px solid var(--orange); border-radius: 2px;
+}
+.map-legend .swatch.route { border-top: 4px dashed #1f6feb; }
 .pin-walker.stale {
   animation: none; box-shadow: none; opacity: .55; background: #9a9a9a;
 }
