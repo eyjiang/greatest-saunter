@@ -108,7 +108,8 @@ export async function POST(req) {
   try {
   let state = await readState();
 
-  if (state.timer.finished && type !== 'timer_unfinish' && type !== 'full_reset') {
+  const allowedWhenFinished = new Set(['timer_unfinish', 'full_reset', 'timer_reset', 'event_delete']);
+  if (state.timer.finished && !allowedWhenFinished.has(type)) {
     return NextResponse.json({ error: 'The walk is finished — the record is frozen forever. 🏁' }, { status: 409 });
   }
 
@@ -176,8 +177,17 @@ export async function POST(req) {
       break;
     }
     case 'timer_reset': {
-      state.timer = { ...state.timer, running: false, accumMs: 0, lastStartTs: null, startedAt: null, finished: false, finishedAt: null };
-      addEvent(state, { kind: 'status', name: 'Timer', text: 'Clock reset to 0:00 (false start — it never happened 🤫)' });
+      // everything the aborted walk produced goes with it; the fundraiser,
+      // challenges, planned route and settings are not walk data and stay
+      const fresh = defaultState();
+      fresh.config = state.config;
+      fresh.donations = state.donations;
+      fresh.challenges = state.challenges;
+      fresh.timer.goalHours = state.timer.goalHours;
+      fresh.walkEpoch = now;
+      state = fresh;
+      await Promise.all([clearLocations(), clearTracks()]);
+      addEvent(state, { kind: 'status', name: 'Timer', text: 'Walk reset to 0:00 — false start, it never happened 🤫' });
       break;
     }
     case 'set_miles': {

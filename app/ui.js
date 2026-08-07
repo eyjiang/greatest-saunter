@@ -581,7 +581,7 @@ function MapSection({ state, geo, now }) {
 
   return (
     <section>
-      <div className="sec-title">Live Map <span className="sub">planned route, the trail we actually walked, and pinned posts</span></div>
+      <div className="sec-title">Live Map</div>
       <div className="card" style={{ padding: 8 }}>
         <div id="map" ref={mapRef} />
         <div className="map-legend">
@@ -718,9 +718,8 @@ function Challenges({ state, act, finished, isAdmin, adminCode }) {
 
   return (
     <section>
-      <div className="sec-title">Challenges <span className="sub">dare the walkers — pay up when they deliver</span></div>
+      <div className="sec-title">Challenges</div>
       <div className="card">
-        {state.challenges.length === 0 && <div className="chart-empty">No challenges yet. Be the first to make them suffer (for charity). 😈</div>}
         {[...open, ...done].map((c) => (
           <div key={c.id} className={`challenge ${c.done ? 'done' : ''}`}>
             <div className="amt">${c.amount}</div>
@@ -730,7 +729,10 @@ function Challenges({ state, act, finished, isAdmin, adminCode }) {
             </div>
             {c.done && <span className="badge-done">DONE ✓</span>}
             {!c.done && isAdmin && !finished && (
-              <button className="btn small" onClick={() => act({ type: 'challenge_done', id: c.id, adminCode })}>Mark done</button>
+              <button
+                className="btn small"
+                onClick={() => act({ type: 'challenge_done', id: c.id, adminCode }).catch((err) => setMsg('err:' + err.message))}
+              >Mark done</button>
             )}
           </div>
         ))}
@@ -874,7 +876,7 @@ function StepsChart({ state }) {
 
   return (
     <section>
-      <div className="sec-title">Step count <span className="sub">manually logged along the way</span></div>
+      <div className="sec-title">Step count</div>
       <div className="card">
         {!chart ? (
           <div className="chart-empty">
@@ -948,6 +950,7 @@ function FeedSection({ state, act, finished, now, isAdmin, adminCode }) {
   const [pin, setPin] = useState(true);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
+  const [delMsg, setDelMsg] = useState('');
   const fileRef = useRef(null);
 
   useEffect(() => { setName(localStorage.getItem('saunter_name') || ''); }, []);
@@ -1061,6 +1064,8 @@ function FeedSection({ state, act, finished, now, isAdmin, adminCode }) {
         </div>
       )}
 
+      {delMsg && <div className="msg err" style={{ marginBottom: 8 }}>{delMsg}</div>}
+
       <div className="feed">
         {events.length === 0 && <div className="chart-empty">Nothing yet. The saunter awaits.</div>}
         {events.map((ev) => (
@@ -1082,7 +1087,11 @@ function FeedSection({ state, act, finished, now, isAdmin, adminCode }) {
               <button
                 className="btn small ghost"
                 title="delete"
-                onClick={() => act({ type: 'event_delete', id: ev.id, adminCode })}
+                onClick={async () => {
+                  setDelMsg('');
+                  try { await act({ type: 'event_delete', id: ev.id, adminCode }); }
+                  catch (err) { setDelMsg(err.message); }
+                }}
                 style={{ alignSelf: 'flex-start' }}
               >✕</button>
             )}
