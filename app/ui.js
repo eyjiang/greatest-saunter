@@ -1,10 +1,22 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { haversineMeters, pathLengthMeters, metersToMiles, parseRouteText, parseGpx, sanitizePoints } from '../lib/geo';
 
 /* ---------------- helpers ---------------- */
 
 const ORANGE = '#fc4c02';
+const ROUTE_BLUE = '#1f6feb';
+const TRAIL_COLORS = [ORANGE, '#0b8f5a', '#7048e8', '#d6336c'];
+
+function trailColor(name, i) {
+  return TRAIL_COLORS[i % TRAIL_COLORS.length] || ORANGE;
+}
+
+function fmtMiles(meters) {
+  const mi = metersToMiles(meters);
+  return mi < 0.1 ? `${Math.round(meters)} m` : `${mi.toFixed(1)} mi`;
+}
 
 const MOOD_SCORE = {
   '🤩': 5, '😄': 5, '💪': 5, '🔥': 5, '🚀': 5, '🥳': 5,
@@ -15,11 +27,12 @@ const MOOD_SCORE = {
 };
 const EMOJI_PICKS = ['💪', '🔥', '😄', '🙂', '😅', '😐', '🥱', '🥵', '😫', '💀'];
 
-async function api(payload) {
+async function api(payload, extra = {}) {
   const res = await fetch('/api/action', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
+    ...extra,
   });
   const data = await res.json().catch(() => null);
   if (!res.ok) throw new Error((data && data.error) || `request failed (HTTP ${res.status}) — if you are on a long *-vercel.app deployment URL, use the-greatest-saunter.vercel.app instead`);
@@ -108,10 +121,32 @@ export default function Ui() {
   const [adminCode, setAdminCode] = useState('');
   const [isAdmin, setIsAdmin] = useState(false);
 
+  /* live location sharing lives here (not in the admin panel) so it keeps
+     running when the panel is closed — closing the overlay used to unmount
+     the effect and silently kill the GPS watch */
+  const [sharing, setSharing] = useState(false);
+  const [shareName, setShareName] = useState('Evan');
+  const [lastPost, setLastPost] = useState(null);
+  const [shareErr, setShareErr] = useState('');
+  const [geo, setGeo] = useState({ route: null, tracks: {} });
+  const trackRef = useRef([]);
+
   const refresh = useCallback(async () => {
     try {
       const res = await fetch('/api/state', { cache: 'no-store' });
       if (res.ok) setState(await res.json());
+    } catch {}
+  }, []);
+
+  /* map geometry is much heavier than the rest of the state, so it gets its
+     own endpoint and a slower poll */
+  const refreshGeo = useCallback(async () => {
+    try {
+      const res = await fetch('/api/geo', { cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        setGeo({ route: data.route || null, tracks: data.tracks || {} });
+      }
     } catch {}
   }, []);
 
@@ -121,6 +156,12 @@ export default function Ui() {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => { clearInterval(p); clearInterval(t); };
   }, [refresh]);
+
+  useEffect(() => {
+    refreshGeo();
+    const g = setInterval(refreshGeo, 20000);
+    return () => clearInterval(g);
+  }, [refreshGeo]);
 
   useEffect(() => {
     const saved = localStorage.getItem('saunter_admin');
@@ -135,6 +176,100 @@ export default function Ui() {
     if (data.state) setState(data.state);
     return data;
   }, []);
+
+  useEffect(() => {
+    if (!sharing) return;
+    if (!navigator.geolocation) {
+      setShareErr('no geolocation on this device');
+      setSharing(false);
+      return;
+    }
+
+    let coords = null;
+    let lastSent = 0;
+    let lastPersist = 0;
+    let stopped = false;
+
+    // breadcrumbs survive a page reload, so a mid-walk refresh doesn't lose the tail
+    const storeKey = `saunter_track_${shareName}`;
+    try {
+      trackRef.current = sanitizePoints(JSON.parse(localStorage.getItem(storeKey) || '[]')).filter((p) => p.length === 3);
+    } catch { trackRef.current = []; }
+
+    const persist = (force = false) => {
+      if (!force && Date.now() - lastPersist < 20000) return;
+      lastPersist = Date.now();
+      try { localStorage.setItem(storeKey, JSON.stringify(trackRef.current.slice(-3000))); } catch {}
+    };
+
+    const send = (force = false) => {
+      if (!coords || stopped) return;
+      if (!force && Date.now() - lastSent < 10000) return;
+      lastSent = Date.now();
+      api(
+        {
+          type: 'location_update',
+          adminCode,
+          name: shareName,
+          lat: coords.lat,
+          lng: coords.lng,
+          // resend a tail rather than a single point: if the server reads a
+          // stale copy of the track, the overlap fills the gap back in
+          tail: trackRef.current.slice(-60),
+        },
+        { keepalive: true }
+      )
+        .then(() => { if (!stopped) { setLastPost(Date.now()); setShareErr(''); } })
+        .catch((e) => { if (!stopped) setShareErr('location post: ' + e.message); });
+    };
+
+    // post on every fresh GPS fix (throttled to ~10s) so the pin follows the walk
+    const watchId = navigator.geolocation.watchPosition(
+      (p) => {
+        coords = { lat: p.coords.latitude, lng: p.coords.longitude };
+        const pt = [coords.lat, coords.lng, Date.now()];
+        const last = trackRef.current[trackRef.current.length - 1];
+        // ~12m of movement, or a couple of minutes standing still, earns a breadcrumb
+        if (!last || haversineMeters(last, pt) >= 12 || pt[2] - last[2] >= 120000) {
+          trackRef.current.push(sanitizePoints([pt])[0]);
+          persist();
+        }
+        send();
+      },
+      (err) => setShareErr('location: ' + err.message + (err.code === 1 ? ' — allow location access for this site in your browser settings' : '')),
+      { enableHighAccuracy: true, maximumAge: 5000 }
+    );
+    // heartbeat in case the device stops emitting fixes while standing still
+    const iv = setInterval(() => send(true), 15000);
+
+    // phones suspend timers + GPS when the screen sleeps: hold a wake lock
+    // while sharing, and post immediately when the tab becomes visible again
+    let wakeLock = null;
+    const acquireWakeLock = () => {
+      try {
+        navigator.wakeLock?.request('screen')
+          .then((l) => { if (stopped) l.release().catch(() => {}); else wakeLock = l; })
+          .catch(() => {});
+      } catch {}
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        acquireWakeLock();
+        send(true);
+      }
+    };
+    acquireWakeLock();
+    document.addEventListener('visibilitychange', onVisible);
+
+    return () => {
+      stopped = true;
+      persist(true);
+      navigator.geolocation.clearWatch(watchId);
+      clearInterval(iv);
+      document.removeEventListener('visibilitychange', onVisible);
+      try { wakeLock?.release(); } catch {}
+    };
+  }, [sharing, shareName, adminCode]);
 
   if (!state) {
     return (
@@ -158,6 +293,11 @@ export default function Ui() {
           <span className="logo">🥾 The Greatest Saunter</span>
           {t.running && <span className="live-dot"><i />LIVE</span>}
           {finished && <span className="live-dot" style={{ background: 'rgba(0,0,0,.3)' }}>🏁 FINAL</span>}
+          {sharing && (
+            <span className="live-dot" style={{ background: 'rgba(0,90,20,.45)' }} title={shareErr || (lastPost ? `last pin posted ${ago(lastPost, now)}` : 'waiting for GPS fix…')}>
+              🛰 {shareErr ? 'GPS ERROR' : lastPost ? `SHARING · ${shareName}` : 'GPS…'}
+            </span>
+          )}
           <button className="admin-btn" onClick={() => setAdminOpen((v) => !v)}>
             {adminOpen ? 'Close' : 'Admin'}
           </button>
@@ -170,7 +310,7 @@ export default function Ui() {
 
       <div className="wrap">
         <StatsGrid state={state} elapsed={elapsed} now={now} />
-        <MapSection state={state} now={now} />
+        <MapSection state={state} geo={geo} now={now} />
         <Donations state={state} act={act} finished={finished} now={now} />
         <Challenges state={state} act={act} finished={finished} isAdmin={isAdmin} adminCode={adminCode} />
         <MoodDashboard state={state} now={now} />
@@ -192,6 +332,14 @@ export default function Ui() {
           isAdmin={isAdmin}
           setIsAdmin={setIsAdmin}
           close={() => setAdminOpen(false)}
+          sharing={sharing}
+          setSharing={setSharing}
+          shareName={shareName}
+          setShareName={setShareName}
+          lastPost={lastPost}
+          shareErr={shareErr}
+          geo={geo}
+          refreshGeo={refreshGeo}
         />
       )}
     </>
@@ -267,11 +415,19 @@ function StatsGrid({ state, elapsed, now }) {
 
 /* ---------------- map ---------------- */
 
-function MapSection({ state, now }) {
+function MapSection({ state, geo, now }) {
   const mapRef = useRef(null);
   const leafletRef = useRef(null);
   const layerRef = useRef(null);
+  const geoLayerRef = useRef(null);
   const fittedRef = useRef(false);
+  const [ready, setReady] = useState(false);
+
+  const route = geo.route;
+  const tracks = geo.tracks || {};
+  const trackNames = Object.keys(tracks).sort();
+  // popups only need "3m ago" to be roughly right — don't redraw every second
+  const nowBucket = Math.floor(now / 30000);
 
   useEffect(() => {
     let cancelled = false;
@@ -306,6 +462,7 @@ function MapSection({ state, now }) {
         maxZoom: 19,
       }).addTo(map);
       leafletRef.current = map;
+      geoLayerRef.current = L.layerGroup().addTo(map); // route + trails, under the pins
       layerRef.current = L.layerGroup().addTo(map);
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
@@ -314,11 +471,56 @@ function MapSection({ state, now }) {
           { timeout: 5000 }
         );
       }
+      setReady(true);
     });
 
     return () => { cancelled = true; };
   }, []);
 
+  /* planned route + walked trails */
+  useEffect(() => {
+    const L = window.L;
+    const map = leafletRef.current;
+    const layer = geoLayerRef.current;
+    if (!L || !map || !layer) return;
+
+    layer.clearLayers();
+    const pts = [];
+
+    if (route && route.points.length > 1) {
+      L.polyline(route.points, { color: '#fff', weight: 8, opacity: 0.65, interactive: false }).addTo(layer);
+      L.polyline(route.points, { color: ROUTE_BLUE, weight: 4, opacity: 0.85, dashArray: '9 9', lineCap: 'round' })
+        .bindPopup(`<b>${escapeHtml(route.name || 'Planned route')}</b><br/>planned · ${fmtMiles(pathLengthMeters(route.points))}`)
+        .addTo(layer);
+      const start = route.points[0];
+      const end = route.points[route.points.length - 1];
+      L.marker(start, {
+        icon: L.divIcon({ className: '', html: '<div class="pin-route start">A</div>', iconSize: [22, 22], iconAnchor: [11, 11] }),
+      }).bindPopup('Route start').addTo(layer);
+      L.marker(end, {
+        icon: L.divIcon({ className: '', html: '<div class="pin-route end">🏁</div>', iconSize: [22, 22], iconAnchor: [11, 11] }),
+      }).bindPopup('Route finish').addTo(layer);
+      pts.push(...route.points.map((p) => [p[0], p[1]]));
+    }
+
+    trackNames.forEach((name, i) => {
+      const pointsForName = tracks[name];
+      if (!pointsForName || pointsForName.length < 2) return;
+      const line = pointsForName.map((p) => [p[0], p[1]]);
+      L.polyline(line, { color: '#fff', weight: 9, opacity: 0.7, interactive: false }).addTo(layer);
+      L.polyline(line, { color: trailColor(name, i), weight: 5, opacity: 0.95, lineCap: 'round', lineJoin: 'round' })
+        .bindPopup(`<b>${escapeHtml(name)}</b><br/>actually walked · ${fmtMiles(pathLengthMeters(line))}`)
+        .addTo(layer);
+      pts.push(...line);
+    });
+
+    if (pts.length && !fittedRef.current) {
+      fittedRef.current = true;
+      map.fitBounds(pts, { padding: [40, 40], maxZoom: 16 });
+    }
+  }, [route, tracks, trackNames.join('|'), ready]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* walker pins + pinned posts */
   useEffect(() => {
     const L = window.L;
     const map = leafletRef.current;
@@ -330,9 +532,12 @@ function MapSection({ state, now }) {
 
     Object.entries(state.locations || {}).forEach(([name, loc]) => {
       if (!loc || loc.lat == null) return;
-      const icon = L.divIcon({ className: '', html: `<div class="pin-walker">${name[0] || '?'}</div>`, iconSize: [34, 34], iconAnchor: [17, 17] });
+      const age = now - (loc.ts || 0);
+      if (age > 12 * 3600000) return; // a pin half a day old isn't a location anymore
+      const stale = age > 10 * 60000;
+      const icon = L.divIcon({ className: '', html: `<div class="pin-walker${stale ? ' stale' : ''}">${escapeHtml(name[0] || '?')}</div>`, iconSize: [34, 34], iconAnchor: [17, 17] });
       L.marker([loc.lat, loc.lng], { icon, zIndexOffset: 1000 })
-        .bindPopup(`<b>${name}</b><br/>live location · ${ago(loc.ts, now)}`)
+        .bindPopup(`<b>${escapeHtml(name)}</b><br/>${stale ? 'last seen' : 'live location'} · ${ago(loc.ts, now)}`)
         .addTo(layer);
       pts.push([loc.lat, loc.lng]);
     });
@@ -353,13 +558,28 @@ function MapSection({ state, now }) {
       fittedRef.current = true;
       map.fitBounds(pts, { padding: [40, 40], maxZoom: 15 });
     }
-  }, [state, now]);
+  }, [state, nowBucket, ready]);
+
+  const routeMeters = route ? pathLengthMeters(route.points) : 0;
 
   return (
     <section>
-      <div className="sec-title">Live Map <span className="sub">walkers + pinned comments &amp; photos</span></div>
+      <div className="sec-title">Live Map <span className="sub">planned route, the trail we actually walked, and pinned posts</span></div>
       <div className="card" style={{ padding: 8 }}>
         <div id="map" ref={mapRef} />
+        <div className="map-legend">
+          {route && (
+            <span><i className="swatch route" /> {route.name || 'Planned route'} · {fmtMiles(routeMeters)} planned</span>
+          )}
+          {trackNames.map((name, i) => (
+            <span key={name}>
+              <i className="swatch trail" style={{ borderTopColor: trailColor(name, i) }} /> {name} walked · {fmtMiles(pathLengthMeters(tracks[name]))}
+            </span>
+          ))}
+          {!route && trackNames.length === 0 && (
+            <span style={{ color: 'var(--ink-3)' }}>No route loaded yet — admins can upload a GPX in the admin panel.</span>
+          )}
+        </div>
       </div>
       {state.config.mapsEmbed && (
         <div className="card" style={{ padding: 8, marginTop: 10 }}>
@@ -373,7 +593,8 @@ function MapSection({ state, now }) {
         </div>
       )}
       <div className="map-note">
-        Orange pulsing pins are walkers streaming live location (updates every ~15s while their admin panel is sharing).
+        The dashed blue line is the route we planned; the solid line is where we’ve actually walked, drawn from the
+        walkers’ live GPS breadcrumbs. Pulsing pins are walkers streaming live location right now.
         Emoji / 📷 / 💬 pins are crowd posts pinned where they were sent.
       </div>
     </section>
@@ -857,7 +1078,7 @@ function FeedSection({ state, act, finished, now, isAdmin, adminCode }) {
 
 /* ---------------- admin panel ---------------- */
 
-function AdminPanel({ state, act, now, adminCode, setAdminCode, isAdmin, setIsAdmin, close }) {
+function AdminPanel({ state, act, now, adminCode, setAdminCode, isAdmin, setIsAdmin, close, sharing, setSharing, shareName, setShareName, lastPost, shareErr, geo, refreshGeo }) {
   const [code, setCode] = useState(adminCode);
   const [miles, setMiles] = useState('');
   const [steps, setSteps] = useState('');
@@ -865,10 +1086,11 @@ function AdminPanel({ state, act, now, adminCode, setAdminCode, isAdmin, setIsAd
   const [donateUrl, setDonateUrl] = useState(state.config.donateUrl || '');
   const [goal, setGoal] = useState(String(state.donations.goal || ''));
   const [mapsEmbed, setMapsEmbed] = useState(state.config.mapsEmbed || '');
-  const [me, setMe] = useState('Evan');
-  const [sharing, setSharing] = useState(false);
   const [msg, setMsg] = useState('');
-  const [lastPost, setLastPost] = useState(null);
+  const [routeName, setRouteName] = useState('');
+  const [routePaste, setRoutePaste] = useState('');
+  const [routeBusy, setRouteBusy] = useState(false);
+  const routeFileRef = useRef(null);
 
   async function login() {
     setMsg('');
@@ -891,35 +1113,37 @@ function AdminPanel({ state, act, now, adminCode, setAdminCode, isAdmin, setIsAd
     } catch (e) { setMsg('err:' + e.message); }
   };
 
-  /* live location sharing: keep the freshest GPS fix, post it every 15s */
-  useEffect(() => {
-    if (!sharing) return;
-    if (!navigator.geolocation) { setMsg('err:no geolocation on this device'); setSharing(false); return; }
+  async function saveRoute(points, sourceLabel) {
+    setRouteBusy(true);
+    setMsg('');
+    try {
+      const res = await act({ type: 'route_set', adminCode, name: routeName || sourceLabel, points });
+      setRoutePaste('');
+      if (routeFileRef.current) routeFileRef.current.value = '';
+      await refreshGeo();
+      setMsg(`Route loaded — ${res.points} points on the map 🗺`);
+    } catch (e) { setMsg('err:' + e.message); }
+    setRouteBusy(false);
+  }
 
-    let coords = null;
-    const send = () => {
-      if (!coords) return;
-      act({ type: 'location_update', adminCode, name: me, lat: coords.lat, lng: coords.lng })
-        .then(() => { setLastPost(Date.now()); setMsg(''); })
-        .catch((e) => setMsg('err:location post: ' + e.message));
-    };
+  async function routeFromFile() {
+    const file = routeFileRef.current?.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const points = /\.gpx$/i.test(file.name) ? parseGpx(text) : parseRouteText(text);
+      await saveRoute(points, file.name.replace(/\.[^.]+$/, ''));
+    } catch (e) { setMsg('err:' + e.message); }
+  }
 
-    const watchId = navigator.geolocation.watchPosition(
-      (p) => {
-        const first = !coords;
-        coords = { lat: p.coords.latitude, lng: p.coords.longitude };
-        if (first) send();
-      },
-      (err) => setMsg('err:location: ' + err.message + (err.code === 1 ? ' — allow location access for this site in your browser settings' : '')),
-      { enableHighAccuracy: true, maximumAge: 5000 }
-    );
-    const iv = setInterval(send, 15000);
+  async function routeFromPaste() {
+    try {
+      await saveRoute(parseRouteText(routePaste), 'Planned route');
+    } catch (e) { setMsg('err:' + e.message); }
+  }
 
-    return () => {
-      navigator.geolocation.clearWatch(watchId);
-      clearInterval(iv);
-    };
-  }, [sharing, me, adminCode, act]);
+  const routePoints = geo.route ? geo.route.points.length : 0;
+  const routeMiles = geo.route ? fmtMiles(pathLengthMeters(geo.route.points)) : null;
 
   const t = state.timer;
 
@@ -971,20 +1195,65 @@ function AdminPanel({ state, act, now, adminCode, setAdminCode, isAdmin, setIsAd
         <div className="admin-box">
           <h4>📍 Stream my location</h4>
           <div className="row">
-            <select value={me} onChange={(e) => setMe(e.target.value)} style={{ maxWidth: 120 }}>
+            <select value={shareName} onChange={(e) => setShareName(e.target.value)} style={{ maxWidth: 120 }} disabled={sharing}>
               <option>Evan</option>
               <option>Ganesh</option>
             </select>
             <button className={`btn ${sharing ? 'dark' : ''}`} onClick={() => setSharing((v) => !v)}>
               {sharing ? '⏹ Stop sharing' : '🛰 Start sharing'}
             </button>
+            <button className="btn small ghost" onClick={() => doAct({ type: 'location_clear' }, 'All pins cleared')} title="remove every walker pin from the map">
+              🧹 Clear pins
+            </button>
           </div>
           <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 6 }}>
             {sharing
-              ? lastPost
-                ? <span style={{ color: 'var(--good)', fontWeight: 700 }}>● sharing as {me} — last pin posted {ago(lastPost, now)}</span>
-                : 'waiting for GPS fix… (allow location access if prompted)'
-              : 'Keep this tab open while walking — posts your pin every ~15s.'}
+              ? shareErr
+                ? <span style={{ color: '#c62828', fontWeight: 700 }}>⚠ {shareErr}</span>
+                : lastPost
+                  ? <span style={{ color: 'var(--good)', fontWeight: 700 }}>● sharing as {shareName} — last pin posted {ago(lastPost, now)}</span>
+                  : 'waiting for GPS fix… (allow location access if prompted)'
+              : 'Posts your pin as you move (every ~10–15s). Sharing keeps running when this panel is closed — the 🛰 badge up top shows it’s live.'}
+          </div>
+        </div>
+
+        <div className="admin-box">
+          <h4>🗺 Planned route</h4>
+          <div style={{ fontSize: 12, color: 'var(--ink-3)', marginBottom: 6 }}>
+            {geo.route
+              ? <span style={{ color: 'var(--good)', fontWeight: 700 }}>● “{geo.route.name}” loaded — {routePoints} points, {routeMiles}</span>
+              : 'No route on the map yet.'}
+          </div>
+          <label className="lbl">Upload a GPX or GeoJSON</label>
+          <input type="file" accept=".gpx,.geojson,.json,application/gpx+xml,application/geo+json,application/json" ref={routeFileRef} style={{ fontSize: 13 }} />
+          <div style={{ marginTop: 6 }}>
+            <button className="btn small" onClick={routeFromFile} disabled={routeBusy}>Load file</button>
+          </div>
+          <label className="lbl">…or paste GeoJSON, an encoded polyline, or “lat,lng” lines</label>
+          <textarea
+            value={routePaste}
+            onChange={(e) => setRoutePaste(e.target.value)}
+            placeholder={'40.7484,-73.9857\n40.7580,-73.9855\n40.7614,-73.9776'}
+            style={{ minHeight: 70 }}
+          />
+          <label className="lbl">Route name (optional)</label>
+          <input type="text" value={routeName} onChange={(e) => setRouteName(e.target.value)} placeholder="The Big Loop" style={{ maxWidth: 200 }} />
+          <div className="row" style={{ marginTop: 8 }}>
+            <button className="btn small" onClick={routeFromPaste} disabled={routeBusy || !routePaste.trim()}>Save route</button>
+            {geo.route && (
+              <button
+                className="btn small ghost"
+                onClick={() => { if (confirm('Remove the planned route from the map?')) doAct({ type: 'route_clear' }, 'Route removed').then(refreshGeo); }}
+              >Clear route</button>
+            )}
+            <button
+              className="btn small ghost"
+              onClick={() => { if (confirm('Erase the walked trail? This deletes the GPS breadcrumbs for every walker.')) doAct({ type: 'track_clear' }, 'Trail erased').then(refreshGeo); }}
+            >Erase trail</button>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 6 }}>
+            Export a GPX from Strava, Gaia, onthegomap or Google&nbsp;Earth and drop it in — the trail we actually walk
+            draws itself from the live GPS pings.
           </div>
         </div>
 
@@ -1032,7 +1301,7 @@ function AdminPanel({ state, act, now, adminCode, setAdminCode, isAdmin, setIsAd
         <div className="admin-box">
           <h4>Session</h4>
           <div className="row">
-            <button className="btn ghost small" onClick={() => { localStorage.removeItem('saunter_admin'); setIsAdmin(false); setAdminCode(''); }}>Log out</button>
+            <button className="btn ghost small" onClick={() => { localStorage.removeItem('saunter_admin'); setIsAdmin(false); setAdminCode(''); setSharing(false); }}>Log out</button>
             <button className="btn small dark" onClick={close}>Close panel</button>
           </div>
           {msg && <div className={`msg ${msg.startsWith('err:') ? 'err' : ''}`}>{msg.replace(/^err:/, '')}</div>}
