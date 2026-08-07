@@ -655,6 +655,8 @@ function Donations({ state, act, finished, now }) {
   const donateUrl = /^https?:\/\//i.test(state.config.donateUrl || '') ? state.config.donateUrl : '';
   const venmo = state.config.venmo;
   const zelle = state.config.zelle;
+  const charityUrl = /^https?:\/\//i.test(state.config.charityUrl || '') ? state.config.charityUrl : '';
+  const charityName = state.config.charityName || 'our chosen charities';
   const matchRatio = Number(state.config.matchRatio) || 0;
   const matchLabel = matchRatio === 1 ? '1:1' : `${matchRatio}:1`;
   const matchedTotal = Math.round(total * (1 + matchRatio) * 100) / 100;
@@ -690,6 +692,13 @@ function Donations({ state, act, finished, now }) {
           <div className="match-banner">
             <b>🏢 {matchLabel} company match</b>
             <span>{state.config.matchNote || 'every dollar you give gets matched — your donation counts double'}</span>
+          </div>
+        )}
+
+        {charityUrl && (
+          <div className="charity-line">
+            💚 Every dollar goes to{' '}
+            <a href={charityUrl} target="_blank" rel="noreferrer noopener">{charityName}</a>
           </div>
         )}
 
@@ -1169,6 +1178,8 @@ function AdminPanel({ state, act, now, adminCode, setAdminCode, isAdmin, setIsAd
   const [zelle, setZelle] = useState(state.config.zelle || '');
   const [matchRatio, setMatchRatio] = useState(String(state.config.matchRatio ?? ''));
   const [matchNote, setMatchNote] = useState(state.config.matchNote || '');
+  const [charityUrl, setCharityUrl] = useState(state.config.charityUrl || '');
+  const [charityName, setCharityName] = useState(state.config.charityName || '');
   const [msg, setMsg] = useState('');
   const [routeName, setRouteName] = useState('');
   const [routePaste, setRoutePaste] = useState('');
@@ -1401,10 +1412,14 @@ function AdminPanel({ state, act, now, adminCode, setAdminCode, isAdmin, setIsAd
           <input type="number" value={matchRatio} onChange={(e) => setMatchRatio(e.target.value)} step="0.5" min="0" placeholder="1" />
           <label className="lbl">Match note (optional — e.g. a cap)</label>
           <input type="text" value={matchNote} onChange={(e) => setMatchNote(e.target.value)} placeholder="every dollar matched, up to $500" />
+          <label className="lbl">Where the money goes (link)</label>
+          <input type="url" value={charityUrl} onChange={(e) => setCharityUrl(e.target.value)} placeholder="https://www.givewell.org/charities/top-charities" />
+          <label className="lbl">…shown as</label>
+          <input type="text" value={charityName} onChange={(e) => setCharityName(e.target.value)} placeholder="GiveWell's top charities" />
           <label className="lbl">Google Maps embed URL (optional fallback)</label>
           <input type="url" value={mapsEmbed} onChange={(e) => setMapsEmbed(e.target.value)} placeholder="https://www.google.com/maps/embed?…" />
           <div style={{ marginTop: 8 }}>
-            <button className="btn small" onClick={() => doAct({ type: 'config_set', donateUrl, mapsEmbed, venmo, zelle, matchRatio: Number(matchRatio || 0), matchNote, goal: Number(goal) }, 'Config saved')}>Save</button>
+            <button className="btn small" onClick={() => doAct({ type: 'config_set', donateUrl, mapsEmbed, venmo, zelle, matchRatio: Number(matchRatio || 0), matchNote, charityUrl, charityName, goal: Number(goal) }, 'Config saved')}>Save</button>
           </div>
         </div>
 
