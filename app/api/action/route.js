@@ -289,6 +289,14 @@ export async function POST(req) {
     case 'config_set': {
       if (typeof body.donateUrl === 'string') state.config.donateUrl = str(body.donateUrl, 400);
       if (typeof body.mapsEmbed === 'string') state.config.mapsEmbed = str(body.mapsEmbed, 1200);
+      // accept "@handle", a bare handle, or a pasted venmo URL
+      if (typeof body.venmo === 'string') {
+        state.config.venmo = str(body.venmo, 60)
+          .replace(/^https?:\/\/(account\.)?venmo\.com\/(u\/)?/i, '')
+          .replace(/^@/, '')
+          .replace(/[^A-Za-z0-9_.-].*$/, '');
+      }
+      if (typeof body.zelle === 'string') state.config.zelle = str(body.zelle, 80);
       const goal = num(body.goal, 1, 10000000);
       if (goal !== null) state.donations.goal = goal;
       break;

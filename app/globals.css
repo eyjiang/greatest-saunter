@@ -207,3 +207,12 @@ footer b { color: var(--orange); }
 .admin-box.danger h4 { color: #d6336c; }
 .btn.danger { background: #d6336c; border-color: #d6336c; color: #fff; }
 .btn.danger:disabled { opacity: .45; }
+
+/* payment methods on the fundraiser card */
+.pay-methods { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 14px; }
+.btn.venmo { background: #008CFF; }
+.pay-zelle { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; color: var(--ink-2); }
+.pay-zelle code {
+  font-size: 15px; font-weight: 700; color: var(--ink);
+  background: var(--orange-soft); border: 1px solid var(--line); border-radius: 6px; padding: 5px 9px;
+}
