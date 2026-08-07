@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
-import { readState, writeState, writeLocation } from '../../../lib/store';
+import { readState, writeState, writeLocation, clearLocations } from '../../../lib/store';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -38,7 +38,7 @@ export async function POST(req) {
   const adminTypes = new Set([
     'timer_start', 'timer_stop', 'timer_finish', 'timer_unfinish', 'timer_reset',
     'set_miles', 'steps_add', 'walker_add', 'walker_leave', 'walker_rejoin',
-    'challenge_done', 'config_set', 'location_update', 'event_delete',
+    'challenge_done', 'config_set', 'location_update', 'location_clear', 'event_delete',
   ]);
   if (adminTypes.has(type) && !isAdmin) {
     return NextResponse.json({ error: 'admin only' }, { status: 403 });
@@ -57,6 +57,16 @@ export async function POST(req) {
       return NextResponse.json({ ok: true });
     } catch (e) {
       return NextResponse.json({ error: 'location write failed: ' + (e.message || e) }, { status: 500 });
+    }
+  }
+
+  // wipes walker pins (optionally a single walker's); separate blobs, not shared state
+  if (type === 'location_clear') {
+    try {
+      await clearLocations(str(body.name, 40) || null);
+      return NextResponse.json({ ok: true });
+    } catch (e) {
+      return NextResponse.json({ error: 'location clear failed: ' + (e.message || e) }, { status: 500 });
     }
   }
 

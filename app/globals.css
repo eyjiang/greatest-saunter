@@ -88,6 +88,9 @@ section { margin: 26px 0; }
   font-family: var(--font-display); font-weight: 900; font-size: 16px;
   box-shadow: 0 0 0 4px rgba(252,76,2,.35); animation: pulse 2s infinite;
 }
+.pin-walker.stale {
+  animation: none; box-shadow: none; opacity: .55; background: #9a9a9a;
+}
 
 /* forms */
 input[type="text"], input[type="number"], input[type="url"], textarea, select {

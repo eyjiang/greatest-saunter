@@ -15,11 +15,12 @@ const MOOD_SCORE = {
 };
 const EMOJI_PICKS = ['💪', '🔥', '😄', '🙂', '😅', '😐', '🥱', '🥵', '😫', '💀'];
 
-async function api(payload) {
+async function api(payload, extra = {}) {
   const res = await fetch('/api/action', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
+    ...extra,
   });
   const data = await res.json().catch(() => null);
   if (!res.ok) throw new Error((data && data.error) || `request failed (HTTP ${res.status}) — if you are on a long *-vercel.app deployment URL, use the-greatest-saunter.vercel.app instead`);
@@ -108,6 +109,14 @@ export default function Ui() {
   const [adminCode, setAdminCode] = useState('');
   const [isAdmin, setIsAdmin] = useState(false);
 
+  /* live location sharing lives here (not in the admin panel) so it keeps
+     running when the panel is closed — closing the overlay used to unmount
+     the effect and silently kill the GPS watch */
+  const [sharing, setSharing] = useState(false);
+  const [shareName, setShareName] = useState('Evan');
+  const [lastPost, setLastPost] = useState(null);
+  const [shareErr, setShareErr] = useState('');
+
   const refresh = useCallback(async () => {
     try {
       const res = await fetch('/api/state', { cache: 'no-store' });
@@ -136,6 +145,70 @@ export default function Ui() {
     return data;
   }, []);
 
+  useEffect(() => {
+    if (!sharing) return;
+    if (!navigator.geolocation) {
+      setShareErr('no geolocation on this device');
+      setSharing(false);
+      return;
+    }
+
+    let coords = null;
+    let lastSent = 0;
+    let stopped = false;
+
+    const send = (force = false) => {
+      if (!coords || stopped) return;
+      if (!force && Date.now() - lastSent < 10000) return;
+      lastSent = Date.now();
+      api(
+        { type: 'location_update', adminCode, name: shareName, lat: coords.lat, lng: coords.lng },
+        { keepalive: true }
+      )
+        .then(() => { if (!stopped) { setLastPost(Date.now()); setShareErr(''); } })
+        .catch((e) => { if (!stopped) setShareErr('location post: ' + e.message); });
+    };
+
+    // post on every fresh GPS fix (throttled to ~10s) so the pin follows the walk
+    const watchId = navigator.geolocation.watchPosition(
+      (p) => {
+        coords = { lat: p.coords.latitude, lng: p.coords.longitude };
+        send();
+      },
+      (err) => setShareErr('location: ' + err.message + (err.code === 1 ? ' — allow location access for this site in your browser settings' : '')),
+      { enableHighAccuracy: true, maximumAge: 5000 }
+    );
+    // heartbeat in case the device stops emitting fixes while standing still
+    const iv = setInterval(() => send(true), 15000);
+
+    // phones suspend timers + GPS when the screen sleeps: hold a wake lock
+    // while sharing, and post immediately when the tab becomes visible again
+    let wakeLock = null;
+    const acquireWakeLock = () => {
+      try {
+        navigator.wakeLock?.request('screen')
+          .then((l) => { if (stopped) l.release().catch(() => {}); else wakeLock = l; })
+          .catch(() => {});
+      } catch {}
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        acquireWakeLock();
+        send(true);
+      }
+    };
+    acquireWakeLock();
+    document.addEventListener('visibilitychange', onVisible);
+
+    return () => {
+      stopped = true;
+      navigator.geolocation.clearWatch(watchId);
+      clearInterval(iv);
+      document.removeEventListener('visibilitychange', onVisible);
+      try { wakeLock?.release(); } catch {}
+    };
+  }, [sharing, shareName, adminCode]);
+
   if (!state) {
     return (
       <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center' }}>
@@ -158,6 +231,11 @@ export default function Ui() {
           <span className="logo">🥾 The Greatest Saunter</span>
           {t.running && <span className="live-dot"><i />LIVE</span>}
           {finished && <span className="live-dot" style={{ background: 'rgba(0,0,0,.3)' }}>🏁 FINAL</span>}
+          {sharing && (
+            <span className="live-dot" style={{ background: 'rgba(0,90,20,.45)' }} title={shareErr || (lastPost ? `last pin posted ${ago(lastPost, now)}` : 'waiting for GPS fix…')}>
+              🛰 {shareErr ? 'GPS ERROR' : lastPost ? `SHARING · ${shareName}` : 'GPS…'}
+            </span>
+          )}
           <button className="admin-btn" onClick={() => setAdminOpen((v) => !v)}>
             {adminOpen ? 'Close' : 'Admin'}
           </button>
@@ -192,6 +270,12 @@ export default function Ui() {
           isAdmin={isAdmin}
           setIsAdmin={setIsAdmin}
           close={() => setAdminOpen(false)}
+          sharing={sharing}
+          setSharing={setSharing}
+          shareName={shareName}
+          setShareName={setShareName}
+          lastPost={lastPost}
+          shareErr={shareErr}
         />
       )}
     </>
@@ -330,9 +414,12 @@ function MapSection({ state, now }) {
 
     Object.entries(state.locations || {}).forEach(([name, loc]) => {
       if (!loc || loc.lat == null) return;
-      const icon = L.divIcon({ className: '', html: `<div class="pin-walker">${name[0] || '?'}</div>`, iconSize: [34, 34], iconAnchor: [17, 17] });
+      const age = now - (loc.ts || 0);
+      if (age > 12 * 3600000) return; // a pin half a day old isn't a location anymore
+      const stale = age > 10 * 60000;
+      const icon = L.divIcon({ className: '', html: `<div class="pin-walker${stale ? ' stale' : ''}">${escapeHtml(name[0] || '?')}</div>`, iconSize: [34, 34], iconAnchor: [17, 17] });
       L.marker([loc.lat, loc.lng], { icon, zIndexOffset: 1000 })
-        .bindPopup(`<b>${name}</b><br/>live location · ${ago(loc.ts, now)}`)
+        .bindPopup(`<b>${escapeHtml(name)}</b><br/>${stale ? 'last seen' : 'live location'} · ${ago(loc.ts, now)}`)
         .addTo(layer);
       pts.push([loc.lat, loc.lng]);
     });
@@ -857,7 +944,7 @@ function FeedSection({ state, act, finished, now, isAdmin, adminCode }) {
 
 /* ---------------- admin panel ---------------- */
 
-function AdminPanel({ state, act, now, adminCode, setAdminCode, isAdmin, setIsAdmin, close }) {
+function AdminPanel({ state, act, now, adminCode, setAdminCode, isAdmin, setIsAdmin, close, sharing, setSharing, shareName, setShareName, lastPost, shareErr }) {
   const [code, setCode] = useState(adminCode);
   const [miles, setMiles] = useState('');
   const [steps, setSteps] = useState('');
@@ -865,10 +952,7 @@ function AdminPanel({ state, act, now, adminCode, setAdminCode, isAdmin, setIsAd
   const [donateUrl, setDonateUrl] = useState(state.config.donateUrl || '');
   const [goal, setGoal] = useState(String(state.donations.goal || ''));
   const [mapsEmbed, setMapsEmbed] = useState(state.config.mapsEmbed || '');
-  const [me, setMe] = useState('Evan');
-  const [sharing, setSharing] = useState(false);
   const [msg, setMsg] = useState('');
-  const [lastPost, setLastPost] = useState(null);
 
   async function login() {
     setMsg('');
@@ -890,36 +974,6 @@ function AdminPanel({ state, act, now, adminCode, setAdminCode, isAdmin, setIsAd
       if (okMsg) setMsg(okMsg);
     } catch (e) { setMsg('err:' + e.message); }
   };
-
-  /* live location sharing: keep the freshest GPS fix, post it every 15s */
-  useEffect(() => {
-    if (!sharing) return;
-    if (!navigator.geolocation) { setMsg('err:no geolocation on this device'); setSharing(false); return; }
-
-    let coords = null;
-    const send = () => {
-      if (!coords) return;
-      act({ type: 'location_update', adminCode, name: me, lat: coords.lat, lng: coords.lng })
-        .then(() => { setLastPost(Date.now()); setMsg(''); })
-        .catch((e) => setMsg('err:location post: ' + e.message));
-    };
-
-    const watchId = navigator.geolocation.watchPosition(
-      (p) => {
-        const first = !coords;
-        coords = { lat: p.coords.latitude, lng: p.coords.longitude };
-        if (first) send();
-      },
-      (err) => setMsg('err:location: ' + err.message + (err.code === 1 ? ' — allow location access for this site in your browser settings' : '')),
-      { enableHighAccuracy: true, maximumAge: 5000 }
-    );
-    const iv = setInterval(send, 15000);
-
-    return () => {
-      navigator.geolocation.clearWatch(watchId);
-      clearInterval(iv);
-    };
-  }, [sharing, me, adminCode, act]);
 
   const t = state.timer;
 
@@ -971,20 +1025,25 @@ function AdminPanel({ state, act, now, adminCode, setAdminCode, isAdmin, setIsAd
         <div className="admin-box">
           <h4>📍 Stream my location</h4>
           <div className="row">
-            <select value={me} onChange={(e) => setMe(e.target.value)} style={{ maxWidth: 120 }}>
+            <select value={shareName} onChange={(e) => setShareName(e.target.value)} style={{ maxWidth: 120 }} disabled={sharing}>
               <option>Evan</option>
               <option>Ganesh</option>
             </select>
             <button className={`btn ${sharing ? 'dark' : ''}`} onClick={() => setSharing((v) => !v)}>
               {sharing ? '⏹ Stop sharing' : '🛰 Start sharing'}
             </button>
+            <button className="btn small ghost" onClick={() => doAct({ type: 'location_clear' }, 'All pins cleared')} title="remove every walker pin from the map">
+              🧹 Clear pins
+            </button>
           </div>
           <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 6 }}>
             {sharing
-              ? lastPost
-                ? <span style={{ color: 'var(--good)', fontWeight: 700 }}>● sharing as {me} — last pin posted {ago(lastPost, now)}</span>
-                : 'waiting for GPS fix… (allow location access if prompted)'
-              : 'Keep this tab open while walking — posts your pin every ~15s.'}
+              ? shareErr
+                ? <span style={{ color: '#c62828', fontWeight: 700 }}>⚠ {shareErr}</span>
+                : lastPost
+                  ? <span style={{ color: 'var(--good)', fontWeight: 700 }}>● sharing as {shareName} — last pin posted {ago(lastPost, now)}</span>
+                  : 'waiting for GPS fix… (allow location access if prompted)'
+              : 'Posts your pin as you move (every ~10–15s). Sharing keeps running when this panel is closed — the 🛰 badge up top shows it’s live.'}
           </div>
         </div>
 
@@ -1032,7 +1091,7 @@ function AdminPanel({ state, act, now, adminCode, setAdminCode, isAdmin, setIsAd
         <div className="admin-box">
           <h4>Session</h4>
           <div className="row">
-            <button className="btn ghost small" onClick={() => { localStorage.removeItem('saunter_admin'); setIsAdmin(false); setAdminCode(''); }}>Log out</button>
+            <button className="btn ghost small" onClick={() => { localStorage.removeItem('saunter_admin'); setIsAdmin(false); setAdminCode(''); setSharing(false); }}>Log out</button>
             <button className="btn small dark" onClick={close}>Close panel</button>
           </div>
           {msg && <div className={`msg ${msg.startsWith('err:') ? 'err' : ''}`}>{msg.replace(/^err:/, '')}</div>}
