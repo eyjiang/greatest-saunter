@@ -43,9 +43,21 @@ async function api(payload, extra = {}) {
 function getPosition(timeout = 6000) {
   return new Promise((resolve) => {
     if (!navigator.geolocation) return resolve(null);
+    // A pending permission prompt can leave getCurrentPosition hanging without
+    // ever calling either callback — the positionOptions timeout doesn't
+    // reliably cover that wait. Posting a photo must never depend on it, so
+    // guarantee an answer and just drop the pin if location isn't forthcoming.
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish(null), timeout + 1000);
     navigator.geolocation.getCurrentPosition(
-      (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude }),
-      () => resolve(null),
+      (p) => finish({ lat: p.coords.latitude, lng: p.coords.longitude }),
+      () => finish(null),
       { enableHighAccuracy: true, timeout, maximumAge: 30000 }
     );
   });
