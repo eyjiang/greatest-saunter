@@ -230,3 +230,9 @@ footer b { color: var(--orange); }
 /* where the money ends up */
 .charity-line { margin-top: 10px; font-size: 13px; font-weight: 600; color: var(--ink-2); }
 .charity-line a { color: var(--good); text-decoration: underline; text-underline-offset: 2px; }
+
+/* donor roll — every name, no cap */
+.donor-list { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
+.donor-head { font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--ink-3); margin-bottom: 6px; }
+.donor-row { font-size: 13px; padding: 3px 0; color: var(--ink-2); overflow-wrap: anywhere; }
+.donor-row .when { color: var(--ink-3); }
