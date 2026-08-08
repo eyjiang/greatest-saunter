@@ -357,6 +357,19 @@ export default function Ui() {
     );
   }
 
+  // "Miles walked" was a manual admin field nobody updated, so it sat at 0.0
+  // while the trail on the map already knew the real distance. Take the
+  // furthest walker rather than the sum — walking together isn't double the
+  // walk — and let a manual figure win if it's higher, since the GPS
+  // undercounts whenever a phone suspends the page mid-walk.
+  const milesWalked = (() => {
+    let best = 0;
+    for (const pts of Object.values(geo.tracks || {})) {
+      if (Array.isArray(pts) && pts.length > 1) best = Math.max(best, metersToMiles(pathLengthMeters(pts)));
+    }
+    return Math.max(best, Number(state.miles) || 0);
+  })();
+
   const t = state.timer;
   const finished = t.finished;
   const elapsed = finished && t.finishedAt ? t.accumMs : elapsedMs(t, now);
@@ -389,10 +402,10 @@ export default function Ui() {
 
       {finished && <div className="final-banner">🏁 The walk is complete — this page is snapped forever 🏁</div>}
 
-      <Hero state={state} elapsed={elapsed} activeWalkers={activeWalkers} />
+      <Hero state={state} elapsed={elapsed} activeWalkers={activeWalkers} miles={milesWalked} />
 
       <div className="wrap">
-        <StatsGrid state={state} elapsed={elapsed} now={now} />
+        <StatsGrid state={state} />
         <MapSection state={state} geo={geo} now={now} />
         <Donations state={state} act={act} finished={finished} now={now} />
         <Challenges state={state} act={act} finished={finished} isAdmin={isAdmin} adminCode={adminCode} />
@@ -431,7 +444,7 @@ export default function Ui() {
 
 /* ---------------- hero ---------------- */
 
-function Hero({ state, elapsed, activeWalkers }) {
+function Hero({ state, elapsed, activeWalkers, miles }) {
   const t = state.timer;
   const { h, m, s } = fmtHM(elapsed);
   const goalMs = (t.goalHours || 24) * 3600000;
@@ -445,6 +458,10 @@ function Hero({ state, elapsed, activeWalkers }) {
         </div>
         <div className="big-timer">
           {h}<small>H</small> {String(m).padStart(2, '0')}<small>M</small> <small style={{ fontSize: '.22em' }}>{String(s).padStart(2, '0')}S</small>
+        </div>
+        <div className="hero-miles">
+          <span className="n">{miles.toFixed(1)}</span>
+          <span className="u">miles walked</span>
         </div>
         <div className="progress-outer"><div className="progress-inner" style={{ width: `${pct}%` }} /></div>
         <div className="progress-caption">
@@ -467,31 +484,13 @@ function Hero({ state, elapsed, activeWalkers }) {
 
 /* ---------------- stats ---------------- */
 
-function StatsGrid({ state, elapsed, now }) {
-  const miles = state.miles || 0;
-  const elapsedMin = elapsed / 60000;
-  let pace = '—';
-  let mph = '—';
-  if (miles > 0 && elapsedMin > 0) {
-    const p = elapsedMin / miles;
-    pace = `${Math.floor(p)}:${String(Math.round((p % 1) * 60)).padStart(2, '0')}`;
-    mph = (miles / (elapsedMin / 60)).toFixed(1);
-  }
-  const lastSteps = state.steps.length ? state.steps[state.steps.length - 1].total : null;
-  const steps = lastSteps ?? (miles > 0 ? Math.round(miles * 2100) : 0);
-  const raised = state.donations.total;
-
+function StatsGrid({ state }) {
   return (
     <section>
       <div className="stats-grid">
-        <div className="stat orange"><div className="k">Miles walked</div><div className="v">{miles.toFixed(1)} <em>mi</em></div></div>
-        <div className="stat"><div className="k">Avg pace</div><div className="v">{pace} <em>/mi</em></div></div>
-        <div className="stat"><div className="k">Speed</div><div className="v">{mph} <em>mph</em></div></div>
-        <div className="stat"><div className="k">Est. steps{lastSteps === null ? '*' : ''}</div><div className="v">{steps.toLocaleString()}</div></div>
         <div className="stat"><div className="k">Walking now</div><div className="v">{state.walkers.filter((w) => w.active).length}</div></div>
-        <div className="stat orange"><div className="k">Raised</div><div className="v">${raised.toLocaleString()}</div></div>
+        <div className="stat orange"><div className="k">Raised</div><div className="v">${state.donations.total.toLocaleString()}</div></div>
       </div>
-      {lastSteps === null && <div className="map-note">*steps estimated from miles (~2,100/mi) until an admin logs a real count</div>}
     </section>
   );
 }
