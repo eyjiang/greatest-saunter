@@ -254,7 +254,9 @@ export async function POST(req) {
     case 'photo': {
       const name = str(body.name, 40) || 'Anonymous';
       const photoUrl = str(body.photoUrl, 500);
-      if (!photoUrl.startsWith('https://')) return NextResponse.json({ error: 'bad photo url' }, { status: 400 });
+      // https:// for blob-hosted photos, /api/photo/<uuid> for redis-hosted ones
+      const okPhoto = photoUrl.startsWith('https://') || /^\/api\/photo\/[a-f0-9-]{8,64}$/i.test(photoUrl);
+      if (!okPhoto) return NextResponse.json({ error: 'bad photo url' }, { status: 400 });
       addEvent(state, { kind: 'photo', name, text: str(body.text, 300), photoUrl, lat: coord(body.lat), lng: coord(body.lng) });
       break;
     }
