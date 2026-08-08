@@ -144,6 +144,7 @@ export default function Ui() {
   const trackRef = useRef([]);
   const walkEpochRef = useRef(0);
   const pendingDeletesRef = useRef(new Map()); // id -> ts, so a stale poll can't resurrect it
+  const sharingRestoredRef = useRef(false);
 
   /* a just-deleted post can still come back in a poll served from cache;
      hide it until the server stops sending it */
@@ -207,11 +208,39 @@ export default function Ui() {
 
   useEffect(() => {
     const saved = localStorage.getItem('saunter_admin');
-    if (saved) {
-      setAdminCode(saved);
-      api({ type: 'ping', adminCode: saved }).then((r) => setIsAdmin(!!r.ok)).catch(() => {});
+    if (!saved) {
+      sharingRestoredRef.current = true;
+      return;
     }
+    setAdminCode(saved);
+    api({ type: 'ping', adminCode: saved })
+      .then((r) => {
+        setIsAdmin(!!r.ok);
+        // pick sharing back up where it left off. phones suspend a backgrounded
+        // page and often discard it outright, which is why this kept needing to
+        // be switched on again by hand
+        if (r.ok) {
+          try {
+            const prev = JSON.parse(localStorage.getItem('saunter_sharing') || 'null');
+            if (prev && prev.active && prev.name) {
+              setShareName(prev.name);
+              setSharing(true);
+            }
+          } catch {}
+        }
+      })
+      .catch(() => {})
+      .finally(() => { sharingRestoredRef.current = true; });
   }, []);
+
+  /* remember the sharing switch across reloads. guarded so the mount-time run
+     can't write "off" over a saved "on" before the restore above has read it */
+  useEffect(() => {
+    if (!sharingRestoredRef.current) return;
+    try {
+      localStorage.setItem('saunter_sharing', JSON.stringify({ active: sharing, name: shareName }));
+    } catch {}
+  }, [sharing, shareName]);
 
   const act = useCallback(async (payload) => {
     const data = await api(payload);
@@ -340,11 +369,18 @@ export default function Ui() {
           <span className="logo">🥾 The Greatest Saunter</span>
           {t.running && <span className="live-dot"><i />LIVE</span>}
           {finished && <span className="live-dot" style={{ background: 'rgba(0,0,0,.3)' }}>🏁 FINAL</span>}
-          {sharing && (
-            <span className="live-dot" style={{ background: 'rgba(0,90,20,.45)' }} title={shareErr || (lastPost ? `last pin posted ${ago(lastPost, now)}` : 'waiting for GPS fix…')}>
-              🛰 {shareErr ? 'GPS ERROR' : lastPost ? `SHARING · ${shareName}` : 'GPS…'}
-            </span>
-          )}
+          {sharing && (() => {
+            const stalled = lastPost && now - lastPost > 90000;
+            return (
+              <span
+                className="live-dot"
+                style={{ background: shareErr || stalled ? 'rgba(150,0,0,.5)' : 'rgba(0,90,20,.45)' }}
+                title={shareErr || (lastPost ? `last pin posted ${ago(lastPost, now)}` : 'waiting for GPS fix…')}
+              >
+                🛰 {shareErr ? 'GPS ERROR' : !lastPost ? 'GPS…' : stalled ? `STALLED · ${ago(lastPost, now)}` : `SHARING · ${shareName}`}
+              </span>
+            );
+          })()}
           <button className="admin-btn" onClick={() => setAdminOpen((v) => !v)}>
             {adminOpen ? 'Close' : 'Admin'}
           </button>
@@ -1341,7 +1377,7 @@ function AdminPanel({ state, act, now, adminCode, setAdminCode, isAdmin, setIsAd
                 : lastPost
                   ? <span style={{ color: 'var(--good)', fontWeight: 700 }}>● sharing as {shareName} — last pin posted {ago(lastPost, now)}</span>
                   : 'waiting for GPS fix… (allow location access if prompted)'
-              : 'Posts your pin as you move (every ~10–15s). Sharing keeps running when this panel is closed — the 🛰 badge up top shows it’s live.'}
+              : 'Posts your pin as you move (every ~10–15s) and switches itself back on when you reopen the page. Phones stop the GPS whenever the screen locks, so keep the screen awake while you walk — the 🛰 badge up top turns red if the pins stop.'}
           </div>
         </div>
 
