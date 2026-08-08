@@ -686,7 +686,8 @@ function Donations({ state, act, finished, now }) {
     } catch (e) { setMsg('err:' + e.message); }
   }
 
-  const recent = (state.events || []).filter((e) => e.kind === 'donation').slice(-4).reverse();
+  // every donor gets named — this used to keep only the last four
+  const donors = (state.events || []).filter((e) => e.kind === 'donation').slice().reverse();
 
   return (
     <section>
@@ -753,11 +754,13 @@ function Donations({ state, act, finished, now }) {
           </>
         )}
 
-        {recent.length > 0 && (
-          <div style={{ marginTop: 12 }}>
-            {recent.map((d) => (
-              <div key={d.id} style={{ fontSize: 13, padding: '3px 0', color: 'var(--ink-2)' }}>
-                💚 <b>{d.name}</b> donated <b>${d.amount}</b>{d.text ? ` — “${d.text}”` : ''} <span style={{ color: 'var(--ink-3)' }}>({ago(d.ts, now)})</span>
+        {donors.length > 0 && (
+          <div className="donor-list">
+            <div className="donor-head">{donors.length} donation{donors.length === 1 ? '' : 's'}</div>
+            {donors.map((d) => (
+              <div key={d.id} className="donor-row">
+                💚 <b>{d.name}</b> donated <b>${d.amount}</b>{d.text ? ` — “${d.text}”` : ''}{' '}
+                <span className="when">({ago(d.ts, now)})</span>
               </div>
             ))}
           </div>
