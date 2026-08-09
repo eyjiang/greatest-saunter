@@ -1230,6 +1230,7 @@ function AdminPanel({ state, act, now, adminCode, setAdminCode, isAdmin, setIsAd
   const [newWalker, setNewWalker] = useState('');
   const [donateUrl, setDonateUrl] = useState(state.config.donateUrl || '');
   const [goal, setGoal] = useState(String(state.donations.goal || ''));
+  const [raised, setRaised] = useState(String(state.donations.total ?? ''));
   const [mapsEmbed, setMapsEmbed] = useState(state.config.mapsEmbed || '');
   const [venmo, setVenmo] = useState(state.config.venmo || '');
   const [zelle, setZelle] = useState(state.config.zelle || '');
@@ -1465,6 +1466,8 @@ function AdminPanel({ state, act, now, adminCode, setAdminCode, isAdmin, setIsAd
           <input type="url" value={donateUrl} onChange={(e) => setDonateUrl(e.target.value)} placeholder="https://gofundme.com/…" />
           <label className="lbl">Goal ($)</label>
           <input type="number" value={goal} onChange={(e) => setGoal(e.target.value)} />
+          <label className="lbl">Raised total ($) — overrides the running tally</label>
+          <input type="number" value={raised} onChange={(e) => setRaised(e.target.value)} step="0.01" />
           <label className="lbl">Company match (1 = 1:1, 0 = none)</label>
           <input type="number" value={matchRatio} onChange={(e) => setMatchRatio(e.target.value)} step="0.5" min="0" placeholder="1" />
           <label className="lbl">Match note (optional — e.g. a cap)</label>
@@ -1476,7 +1479,7 @@ function AdminPanel({ state, act, now, adminCode, setAdminCode, isAdmin, setIsAd
           <label className="lbl">Google Maps embed URL (optional fallback)</label>
           <input type="url" value={mapsEmbed} onChange={(e) => setMapsEmbed(e.target.value)} placeholder="https://www.google.com/maps/embed?…" />
           <div style={{ marginTop: 8 }}>
-            <button className="btn small" onClick={() => doAct({ type: 'config_set', donateUrl, mapsEmbed, venmo, zelle, matchRatio: Number(matchRatio || 0), matchNote, charityUrl, charityName, goal: Number(goal) }, 'Config saved')}>Save</button>
+            <button className="btn small" onClick={() => doAct({ type: 'config_set', donateUrl, mapsEmbed, venmo, zelle, matchRatio: Number(matchRatio || 0), matchNote, charityUrl, charityName, goal: Number(goal), donationsTotal: raised }, 'Config saved')}>Save</button>
           </div>
         </div>
 
