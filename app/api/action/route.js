@@ -318,7 +318,13 @@ export async function POST(req) {
       break;
     }
     case 'event_delete': {
+      const gone = state.events.find((e) => e.id === body.id);
       state.events = state.events.filter((e) => e.id !== body.id);
+      // donations and completed challenges both added to the total when they
+      // landed, so removing one has to unwind it
+      if (gone && (gone.kind === 'donation' || gone.kind === 'challenge_done') && Number.isFinite(gone.amount)) {
+        state.donations.total = Math.max(0, Math.round((state.donations.total - gone.amount) * 100) / 100);
+      }
       break;
     }
     default:
