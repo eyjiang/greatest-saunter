@@ -369,11 +369,13 @@ export default function Ui() {
   // walk — and let a manual figure win if it's higher, since the GPS
   // undercounts whenever a phone suspends the page mid-walk.
   const milesWalked = (() => {
+    const manual = Number(state.miles) || 0;
+    if (manual > 0) return manual; // an admin typed this; it wins, up or down
     let best = 0;
     for (const pts of Object.values(geo.tracks || {})) {
       if (Array.isArray(pts) && pts.length > 1) best = Math.max(best, metersToMiles(pathLengthMeters(pts)));
     }
-    return Math.max(best, Number(state.miles) || 0);
+    return best;
   })();
 
   const t = state.timer;
