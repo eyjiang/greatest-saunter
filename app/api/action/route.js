@@ -5,6 +5,7 @@ import {
   writeRoute, clearRoute, readTrack, writeTrack, clearTracks,
 } from '../../../lib/store';
 import { sanitizePoints, capPoints, mergeTrack } from '../../../lib/geo';
+import { applyAutoFinish, FROZEN_WHEN_FINISHED } from '../../../lib/walk';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -108,9 +109,12 @@ export async function POST(req) {
   try {
   let state = await readState();
 
-  const allowedWhenFinished = new Set(['timer_unfinish', 'full_reset', 'timer_reset', 'event_delete']);
-  if (state.timer.finished && !allowedWhenFinished.has(type)) {
-    return NextResponse.json({ error: 'The walk is finished — the record is frozen forever. 🏁' }, { status: 409 });
+  // the clock may have run out since the last request
+  const autoFinished = applyAutoFinish(state, now);
+
+  if (state.timer.finished && FROZEN_WHEN_FINISHED.has(type)) {
+    if (autoFinished) await writeState(state);
+    return NextResponse.json({ error: 'The walk is finished — that part of the record is frozen. 🏁' }, { status: 409 });
   }
 
   switch (type) {

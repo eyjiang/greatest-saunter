@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { readState, readLocations, storageInfo } from '../../../lib/store';
+import { readState, writeState, readLocations, storageInfo } from '../../../lib/store';
+import { applyAutoFinish } from '../../../lib/walk';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -7,6 +8,8 @@ export const runtime = 'nodejs';
 export async function GET() {
   try {
     const [state, locations] = await Promise.all([readState(), readLocations()]);
+    // viewers polling is what makes this fire without an admin present
+    if (applyAutoFinish(state)) await writeState(state);
     state.locations = { ...state.locations, ...locations };
     return NextResponse.json(state, {
       headers: { 'Cache-Control': 'no-store, max-age=0' },
