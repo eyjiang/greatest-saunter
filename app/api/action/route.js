@@ -315,6 +315,12 @@ export async function POST(req) {
       if (typeof body.charityName === 'string') state.config.charityName = str(body.charityName, 120);
       const goal = num(body.goal, 1, 10000000);
       if (goal !== null) state.donations.goal = goal;
+      // a straight correction for when the total and the donor list disagree
+      // (deleting an entry before this was fixed left the money behind)
+      if (body.donationsTotal !== undefined && body.donationsTotal !== '') {
+        const total = num(body.donationsTotal, 0, 10000000);
+        if (total !== null) state.donations.total = Math.round(total * 100) / 100;
+      }
       break;
     }
     case 'event_delete': {
