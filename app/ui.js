@@ -145,6 +145,7 @@ export default function Ui() {
   const walkEpochRef = useRef(0);
   const pendingDeletesRef = useRef(new Map()); // id -> ts, so a stale poll can't resurrect it
   const sharingRestoredRef = useRef(false);
+  const finished = Boolean(state && state.timer && state.timer.finished);
 
   /* a just-deleted post can still come back in a poll served from cache;
      hide it until the server stops sending it */
@@ -241,6 +242,11 @@ export default function Ui() {
       localStorage.setItem('saunter_sharing', JSON.stringify({ active: sharing, name: shareName }));
     } catch {}
   }, [sharing, shareName]);
+
+  // once the clock stops, stop extending the trail too
+  useEffect(() => {
+    if (finished) setSharing(false);
+  }, [finished]);
 
   const act = useCallback(async (payload) => {
     const data = await api(payload);
@@ -371,7 +377,6 @@ export default function Ui() {
   })();
 
   const t = state.timer;
-  const finished = t.finished;
   const elapsed = finished && t.finishedAt ? t.accumMs : elapsedMs(t, now);
   const activeWalkers = state.walkers.filter((w) => w.active);
 
@@ -750,7 +755,7 @@ function Donations({ state, act, finished, now }) {
           </div>
         )}
 
-        {!finished && (
+        {(
           <>
             <div className="pay-methods">
               {venmo && (
@@ -840,7 +845,7 @@ function Challenges({ state, act, finished, isAdmin, adminCode }) {
               <div className="by">dared by {c.by}</div>
             </div>
             {c.done && <span className="badge-done">DONE ✓</span>}
-            {!c.done && isAdmin && !finished && (
+            {!c.done && isAdmin && (
               <button
                 className="btn small"
                 onClick={() => act({ type: 'challenge_done', id: c.id, adminCode }).catch((err) => setMsg('err:' + err.message))}
@@ -849,7 +854,7 @@ function Challenges({ state, act, finished, isAdmin, adminCode }) {
           </div>
         ))}
 
-        {!finished && (
+        {(
           <>
             <label className="lbl">Add a challenge</label>
             <div className="row">
@@ -1119,7 +1124,7 @@ function FeedSection({ state, act, finished, now, isAdmin, adminCode }) {
     <section>
       <div className="sec-title">Live Feed</div>
 
-      {!finished && (
+      {(
         <div className="card" style={{ marginBottom: 14 }}>
           <div className="row" style={{ marginBottom: 10 }}>
             {['comment', 'vibe', 'photo'].map((tb) => (
